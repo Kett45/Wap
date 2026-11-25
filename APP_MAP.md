@@ -21,6 +21,6 @@
 - `src/hooks/useTheme.ts`: التحكم في الثيمات، حجم الواجهة، ونوع وسمك الخط العربي.
 
 ## البيلد والنشر (Build & Deploy)
-- `vite.config.ts`: ضبط `base: './'` النسبي العالمي مع إنشاء `404.html` و`.nojekyll` ونسخ البيلد الجاهز تلقائيًا إلى مجلد `/docs` ليشتغل على GitHub Pages مباشرة من الفرع الأساسي.
-- `docs/`: نسخة مبنية وجاهزة (`index.html`, `404.html`, `.nojekyll`, `assets/`) لتشغيل GitHub Pages فورًا باختيار `Branch: main` و`Folder: /docs`.
-- `.github/workflows/deploy.yml`: بناء ونشر تلقائي مزدوج (`gh-pages` + `actions/deploy-pages`).
+- `vite.config.ts`: ضبط `base: '/Wap/'` و`build.outDir: 'docs'` مع `emptyOutDir: true`، وإنشاء `docs/404.html` و`docs/.nojekyll` تلقائيًا بعد البيلد.
+- `docs/`: نسخة مبنية وجاهزة (`index.html`, `404.html`, `.nojekyll`, `assets/`) للنشر عبر GitHub Pages (`Deploy from a branch: main /docs`).
+- `README.md`: وصف المشروع ورابط التطبيق المباشر `https://kett45.github.io/Wap/`.
