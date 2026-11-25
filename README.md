@@ -10,7 +10,7 @@
    👉 **[https://ais-pre-u56yppalu7txdgzuyglxe6-182314852503.europe-west2.run.app](https://ais-pre-u56yppalu7txdgzuyglxe6-182314852503.europe-west2.run.app)**
 
 2. **رابط GitHub Pages الخاص بالريبو (يُحدَّث تلقائيًا بعد أول Push):**
-   👉 **[__GITHUB_PAGES_LIVE_URL__](__GITHUB_PAGES_LIVE_URL__)**
+   👉 **[https://kett45.github.io/Wap/](https://kett45.github.io/Wap/)**
 
 ---
 
