@@ -16,6 +16,9 @@ concurrency:
 
 jobs:
   build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: bun install || npm install --legacy-peer-deps --no-audit --no-fund
 
-      - name: Build SPA (relative base + 404.html + .nojekyll)
+      - name: Build SPA (relative base + 404.html + .nojekyll + /docs)
         run: npm run build
         env:
           VITE_BASE_PATH: "./"
@@ -44,20 +47,12 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
           VITE_FIRESTORE_DATABASE_ID: ${{ vars.VITE_FIRESTORE_DATABASE_ID }}
 
-      - name: Deploy dist to gh-pages branch & auto-enable GitHub Pages
+      - name: Push dist to gh-pages branch (if token has write permission)
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          REPO: ${{ github.event.repository.name }}
           FULL_REPO: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.ref_name }}
         run: |
-          set -e
-          OWNER_LOWER=$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')
-          LIVE_URL="https://${OWNER_LOWER}.github.io/${REPO}/"
-          echo "LIVE_URL=$LIVE_URL" >> $GITHUB_ENV
-
-          # 1) Push built files in ./dist to the gh-pages branch
           cd dist
           touch .nojekyll
           cp -f index.html 404.html
@@ -68,28 +63,20 @@ jobs:
           git add -A
           git commit -m "Deploy kAM web app to GitHub Pages"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${FULL_REPO}.git" gh-pages
-          cd ..
 
-          # 2) Auto-enable GitHub Pages on the gh-pages branch via REST API (if not already enabled)
-          gh api --method POST "repos/${FULL_REPO}/pages" \
-            -f "source[branch]=gh-pages" \
-            -f "source[path]=/" 2>/dev/null || \
-          gh api --method PUT "repos/${FULL_REPO}/pages" \
-            -f "build_type=legacy" \
-            -f "source[branch]=gh-pages" \
-            -f "source[path]=/" 2>/dev/null || true
+      - name: Configure GitHub Pages
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
-          # 3) Stamp the real live URL in the repository Website & Description (top of repo)
-          gh api --method PATCH "repos/${FULL_REPO}" \
-            -f homepage="$LIVE_URL" \
-            -f description="نجم الكارت (kAM) — رابط تشغيل التطبيق: $LIVE_URL" 2>/dev/null || true
+      - name: Upload Pages artifact
+        continue-on-error: true
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
 
-          # 4) Replace any placeholder URL in README.md on the main branch with the real LIVE_URL
-          if grep -q "__GITHUB_PAGES_LIVE_URL__" README.md; then
-            sed -i "s|__GITHUB_PAGES_LIVE_URL__|${LIVE_URL}|g" README.md
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add README.md
-            git commit -m "docs: update README with real GitHub Pages URL [skip ci]" || true
-            git push "https://x-access-token:${GH_TOKEN}@github.com/${FULL_REPO}.git" "HEAD:${DEFAULT_BRANCH}" || true
-          fi
+      - name: Deploy to GitHub Pages (Actions)
+        id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4

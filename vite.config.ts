@@ -34,6 +34,9 @@ export default defineConfig(() => {
           }
           if (fs.existsSync(distDir)) {
             fs.writeFileSync(noJekyll, '');
+            const docsDir = path.resolve(__dirname, 'docs');
+            fs.rmSync(docsDir, {recursive: true, force: true});
+            fs.cpSync(distDir, docsDir, {recursive: true, force: true});
           }
         },
       },
