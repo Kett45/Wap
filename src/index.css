@@ -1,0 +1,137 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --kam-bg: #FBFCFD;
+  --kam-surface: #FFFFFF;
+  --kam-surface-variant: #F3F4FC;
+  --kam-surface-elevated: #EAEBF7;
+  --kam-border: #D7DAE8;
+  --kam-border-strong: #C3C7DC;
+  --kam-primary: #4B5CE5;
+  --kam-on-primary: #FFFFFF;
+  --kam-primary-container: #E8ECFF;
+  --kam-secondary: #554E7B;
+  --kam-tertiary: #0284C7;
+  --kam-text-primary: #1C1A30;
+  --kam-text-secondary: #554E7B;
+  --kam-text-muted: #7A7696;
+  --kam-danger: #C82838;
+  --kam-success: #158050;
+  --kam-warning: #B45309;
+  --kam-gold: #C98212;
+  --kam-silver: #64748B;
+  --kam-bronze: #D97706;
+  --kam-font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+  --kam-font-weight-base: 500;
+  --kam-scale: 1;
+  color-scheme: light;
+}
+
+.dark {
+  --kam-bg: #07080D;
+  --kam-surface: #0F1017;
+  --kam-surface-variant: #161822;
+  --kam-surface-elevated: #1D202E;
+  --kam-border: #252838;
+  --kam-border-strong: #33384D;
+  --kam-primary: #5E6AD2;
+  --kam-on-primary: #FFFFFF;
+  --kam-primary-container: #1E2347;
+  --kam-secondary: #9CB4E8;
+  --kam-tertiary: #38BDF8;
+  --kam-text-primary: #F7F8F8;
+  --kam-text-secondary: #9BA1B0;
+  --kam-text-muted: #686E7E;
+  --kam-danger: #E55353;
+  --kam-success: #22C57E;
+  --kam-warning: #EAB34B;
+  --kam-gold: #EAB34B;
+  --kam-silver: #9BA1B0;
+  --kam-bronze: #F28B50;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    font-family: var(--kam-font-family);
+    background-color: var(--kam-bg);
+    color: var(--kam-text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--kam-bg);
+    color: var(--kam-text-primary);
+    font-weight: var(--kam-font-weight-base);
+    overflow-x: hidden;
+  }
+
+  button,
+  [role="button"] {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--kam-primary);
+    outline-offset: 2px;
+  }
+}
+
+html[data-font-weight="bold"] body {
+  --kam-font-weight-base: 600;
+}
+
+html[data-font-weight="bold"] .font-semibold {
+  font-weight: 700;
+}
+
+html[data-font-weight="bold"] .font-bold {
+  font-weight: 800;
+}
+
+html[data-font-weight="medium"] body {
+  --kam-font-weight-base: 500;
+}
+
+html[data-font-weight="normal"] body {
+  --kam-font-weight-base: 400;
+}
+
+.font-num {
+  font-family: 'Inter', var(--kam-font-family);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
+}
+
+.kam-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.kam-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kam-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--kam-border-strong);
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

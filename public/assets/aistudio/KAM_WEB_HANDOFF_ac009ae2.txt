@@ -1,0 +1,1373 @@
+====================================================================
+أولاً: إعدادات Firebase (firebaseConfig) وقاعدة بيانات Firestore
+====================================================================
+
+تمت قراءة الإعدادات مباشرة من ملفات المشروع (app/google-services.json و app/src/main/res/values/firebase_applet_config.xml):
+
+```ts
+export const firebaseConfig = {
+  apiKey: "AIzaSyCToLHOHWnUbrWameTibf7nYQTMuWrT3zU",
+  authDomain: "gen-lang-client-0007824663.firebaseapp.com",
+  projectId: "gen-lang-client-0007824663",
+  storageBucket: "gen-lang-client-0007824663.firebasestorage.app",
+  messagingSenderId: "369377111242",
+  // تنبيه هام حول appId:
+  // المشروع الحالي مشروع Android فقط، لذلك يحتوي google-services.json على Android App ID فقط:
+  // "1:369377111242:android:2d977571c33c78a1ab9833"
+  // يجب تسجيل Web App جديد داخل Firebase Console -> Project Settings -> Your Apps -> Add app (Web </>)
+  // للحصول على Web appId بصيغة "1:369377111242:web:XXXXXXXXXXXX" ووضعه هنا:
+  appId: "1:369377111242:web:REPLACE_WITH_YOUR_WEB_APP_ID"
+};
+
+// هام جداً: قاعدة بيانات Firestore ليست "(default)" — بل قاعدة بيانات مسماة (Named Database):
+export const FIRESTORE_DATABASE_ID = "ai-studio-android-69ef64c0-fb21-4e5d-8c5b-9e185b0c9dc1";
+```
+
+ملاحظات ربط حرجة للويب (Firebase JS SDK v10+):
+1. تهيئة Firestore بالاسم المخصص (إلزامي):
+   ```ts
+   import { initializeApp } from "firebase/app";
+   import { getAuth } from "firebase/auth";
+   import { getFirestore } from "firebase/firestore";
+
+   const app = initializeApp(firebaseConfig);
+   export const auth = getAuth(app);
+   export const db = getFirestore(app, FIRESTORE_DATABASE_ID);
+   ```
+   (استخدام getFirestore(app) بدون FIRESTORE_DATABASE_ID سيتصل بقاعدة (default) الفارغة ولن يرى بيانات تطبيق الموبايل!)
+2. تسجيل نطاق الويب في Firebase Auth:
+   يجب إضافة دومين تطبيق الويب (و localhost) داخل Firebase Console -> Authentication -> Settings -> Authorized domains حتى يعمل تسجيل الدخول بـ Google بنجاح.
+3. مرجع OAuth Web Client ID الموجود بالمشروع:
+   369377111242-c7dgta18p9t1jloeq8kkte6do70ji5fk.apps.googleusercontent.com
+
+
+====================================================================
+ثانياً: ملف تسليم كامل لبناء تطبيق الويب (kAM / نجم الكارت)
+====================================================================
+
+--------------------------------------------------------------------
+1. وصف التطبيق والمستخدمون والأدوار
+--------------------------------------------------------------------
+اسم التطبيق: kAM (واسمه الظاهر للمستخدم: نجم الكارت)
+الوصف: تطبيق إدارة فصول مدارس الأحد / الكنيسة (خدمة الأطفال) باللغة العربية (RTL)، يتيح للخدام وأمين الفصل تنظيم الأطفال داخل مجموعات/بلوكات للخدام، تسجيل الحضور الأسبوعي، منح كروت النقاط التحفيزية (7 كروت قياسية + كارت إضافي مخصص هو "كارت القمداء")، تتبع المحفوظات والتعليقات والافتقاد، عرض تقارير وتحليلات تفصيلية ولوحة الصدارة بتقويم الأسابيع (بداية الأسبوع يوم السبت) مع التقويم القبطي (تقويم الشهداء)، بالإضافة إلى نظام محادثات جماعية ومراسلات خاصة بين الخدام مع تقارير تلقائية ذكية.
+
+أدوار المستخدمين والصلاحيات:
+1. أمين الفصل الأساسي (Primary Admin — group.adminId):
+   - إنشاء الفصل (الجروب) وحذفه وتغيير اسمه وصورته.
+   - تعيين وإلغاء مساعدي الأمين (assistantAdminIds).
+   - إدارة سياسات الفصل (السماح بالتراجع للخدام، منع تكرار الكارت أسبوعياً، الحد الأقصى الشهري للنقاط، إعدادات "كارت القمداء").
+   - تجديد كود الدعوة اليومي، إنشاء/حذف البلوكات، حذف الأطفال، حظر/فك حظر الخدام، تعديل/حذف أي تسجيل حضور أو كارت لأي خادم.
+2. مساعد الأمين (Assistant Admin — uid in group.assistantAdminIds):
+   - يملك نفس صلاحيات الأمين الأساسي عبر البلوكات والأطفال والسياسات وكود الدعوة والحظر وتعديل/حذف التسجيلات، باستثناء أنه لا يستطيع تعديل قائمة assistantAdminIds أو حظر الأمين الأساسي أو حذف الجروب.
+3. الخادم (Servant — uid in group.memberUids):
+   - رؤية جميع الأطفال والبلوكات والأحداث في الفصل.
+   - إضافة وتعديل بيانات الأطفال وصورهم ونقلهم بين البلوكات، منح الكروت، التراجع عن الكروت التي سجلها بنفسه فقط (عند تفعيل allowServantUndo).
+   - تسجيل الحضور والافتقاد والمحفوظات والتعليقات، تعديل اسمه في البلوك المخصص له، المشاركة في الشات الجماعي والرسائل الخاصة، وإدارة ملفه الشخصي وتفضيلات العرض الخاصة به.
+
+
+--------------------------------------------------------------------
+2. كل الشاشات والمميزات (Screens & Features) بالتفصيل
+--------------------------------------------------------------------
+يتكون التطبيق من شاشات الدخول والإعداد الأولي + 4 تبويبات رئيسية في التنقل (الرئيسية، الرسائل، المجموعة، الإعدادات) + شاشات فرعية/نوافذ منبثقة:
+
+أ) شاشة تسجيل الدخول (SignInScreen):
+- تسجيل دخول عبر Google Sign-In فقط (لا يوجد Anonymous Auth ولا Email/Password).
+- عند نجاح الدخول:
+  1. يتم إنشاء أو تحديث users/{uid}.
+  2. يتم تسجيل/تحديث فهرس البريد الإلكتروني في emailDirectory/em_{sha256_40} للبحث عن الخدام بالإيميل لبدء محادثة خاصة.
+  3. إذا لم يكن لدى المستخدم groupId نشط، يتم توجيهه لشاشة GroupOnboarding.
+
+ب) شاشة إنشاء أو الانضمام لمجموعة (GroupOnboardingScreen):
+- إنشاء فصل جديد: إدخال اسم الفصل -> توليد inviteCode (8 أحرف تبدأ بـ KAM مثل KAM4X9P2) وتعيينه كـ Document ID للمجموعة + توليد dailyInviteToken عشوائي (4 أحرف) صالح 24 ساعة + إضافة الأمين في memberUids و members/{uid} وتحديث users/{uid}.
+- الانضمام لفصل موجود: إدخال كود الدعوة المركّب <inviteCode>-<dailyToken> -> جلب groups/{inviteCode} والتحقق من:
+  - أن المستخدم غير موجود في bannedUids.
+  - أن dailyInviteToken مطابق وأن الكود لم تنتهِ صلاحيته (24 ساعة من inviteCodeUpdatedAtMillis).
+  - ثم إضافة uid إلى memberUids وإنشاء groups/{groupId}/members/{uid} وتحديث users/{uid} (groupId و joinedGroupIds).
+
+ج) الشاشة الرئيسية (HomeScreen):
+- الهيدر العلوي:
+  - اسم الفصل النشط مع إمكانية التبديل بين الفصول المنضم إليها (joinedGroupIds).
+  - منتقي الشهر/الأسبوع الحالي (بتقويم السبت + التقويم القبطي).
+  - زر تحديث/مزامنة شاملة مع السحابة (في الموبايل: Pull-to-refresh + ضغطتين على زر البيت؛ والضغط مرة واحدة على زر البيت من أي شاشة فرعية يعيد للرئيسية).
+- شريط البحث العربي الفوري:
+  - بحث بالاسم أو رقم الطفل (#studentNumber) مع تطبيع الحروف العربية (إزالة التشكيل والمد، توحيد أ/إ/آ -> ا، ة -> ه، ى -> ي) و Debounce خفيف (~180ms) لمنع التعليق.
+- شريط الإجراءات السريعة:
+  - فتح التحضير الذكي بالسحب (SmartAttendance).
+  - فتح الافتقاد الذكي بالسحب (VisitationSwipe).
+  - فتح التقارير ولوحة الصدارة (Reports / Leaderboard — أيقونة الكأس).
+  - إضافة طفل جديد / استيراد جماعي ذكي (لصق قائمة أسماء دفعة واحدة مع كشف المكررات وخيار الدمج أو الاحتفاظ).
+- تنبيهات تكرار الكروت (DuplicateCardAlerts):
+  - تنبيه يظهر إذا حصل طفل على نفس الكارت مرتين في نفس الأسبوع من خادمين مختلفين، مع إمكانية التراجع أو إرسال تنبيه للشات.
+- قائمة البلوكات والأطفال (ServantBlocks + قسم "بدون بلوك"):
+  - كل بلوك له رأس بتصميم شبيه بواتساب (لون البلوك، صورة الخادم المسؤول، نقطة خضراء أونلاين إذا كان lastSeenAt أقل من 3 دقائق، أزرار اتصال/واتساب إذا لم يكن الرقم مخفياً، زر طي/إظهار البلوك يُحفظ في users/{uid}.collapsedBlockIds).
+  - كل صف طفل يعرض:
+    - صورة الطفل (Lazy-loaded من groups/{groupId}/avatars/{studentId} أو الحروف الأولى avatarInitials).
+    - رقم الطفل #studentNumber واسم الطفل.
+    - لمبة الحضور الصغيرة بجانب الاسم للأسبوع المختار: خضراء = PRESENT، حمراء = ABSENT، كهرمانية = ISSUE، ومخفية/رمادية إذا لم يُسجل بعد.
+    - مجموع نقاط الطفل في الشهر الحالي.
+    - أزرار منح الكروت السريعة (الكروت المفعّلة للمستخدم في enabledCards + CUSTOM_ELDER إذا فعّله الأمين): ضغطة لمنح الكارت، وضغطة أخرى للتراجع (إذا مسموح).
+- ملف الطفل الكامل (ChildProfileSheet):
+  - تعديل بيانات الطفل: الاسم + الرقم + اختيار البلوك ("بدون بلوك" أو أي بلوك موجود) مع الحفاظ على الترتيب.
+  - معرض صور الطفل (رفع/حذف/تبديل الصورة الأساسية — تُحفظ مضغوطة Base64 في avatars/{studentId}).
+  - تبويبات/أقسام: المحفوظات (MEMORIZATION + تحديث lastMemorizedText)، التعليقات (COMMENT)، سجل الافتقاد (VISITATION)، سجل الكروت والنقاط (مع التراجع).
+  - إرسال إشعار منسّق خاص بالطفل إلى شات المجموعة.
+
+د) شاشة التحضير الذكي بالسحب (SmartAttendanceScreen):
+- اختيار وضع الجلسة قبل/أثناء البدء:
+  - وضع الحضور (ATTENDANCE_ONLY)
+  - أو وضع كارت محدد (مثل كارت الهدوء، المشاركة، التسبحة، الذهب، المحفوظات، الاعتراف، أو كارت القمداء CUSTOM_ELDER).
+- عرض الأطفال كبطاقات بصورة كبيرة (Swipe Cards أو أزرار سريعة على الويب):
+  - يمين: حضر / أخذ الكارت (PRESENT).
+  - يسار: غائب / لم يأخذ الكارت (ABSENT / NO_CARD).
+  - أسفل: عمل مشكلة مع كتابة ملاحظة (ISSUE).
+  - تراجع (Undo Stack): التراجع خطوة بخطوة.
+- الحفظ والمزامنة:
+  - حفظ سجل الحضور في groups/{groupId}/attendance/{weekKey}_{studentId}.
+  - عند اختيار وضع كارت: يتم أيضاً منح/حذف cardEvent المقابل وتحديث monthlyBalances.
+- إرسال التقرير المجمع للشات ([ATTENDANCE_V3] + منطق الاختلافات Cross-Servant Diff):
+  - قبل الإرسال، يبحث التطبيق عن أقدم تقرير أساسي غير-Diff من نفس الأسبوع (weekKey) ونفس نوع التقرير (reportTypeKey) أرسله خادم آخر:
+    - إذا لم يوجد -> يرسل تقرير [ATTENDANCE_V3] كامل.
+    - إذا وُجد -> يقارن نتائج الخادم الثاني بتقرير الخادم الأول الثابت:
+      - إذا لم توجد أي اختلافات -> لا يرسل رسالة جديدة ويعرض تنبيهاً (Toast): "التقرير مطابق تماماً لتقرير الخادم الأول".
+      - إذا وجدت اختلافات -> يرسل رسالة [ATTENDANCE_V3] تحتوي سطر DIFF|<اسم الخادم الأول> وأسطر D|... للاختلافات فقط!
+
+هـ) شاشة الافتقاد الذكي بالسحب (VisitationSwipeScreen):
+- تعرض أطفال بلوك الخادم (وللأمين خيار الفلترة: بلوكي، كل الفصل، أو بلوك معين).
+- الإجراءات على كل طفل:
+  - تم افتقاده (VISITED)
+  - يحتاج متابعة / مشكلة (FOLLOWUP) مع ملاحظة اختيارية
+  - تخطي / لم يتم افتقاده (NOT_VISITED)
+  - تراجع (Undo) + تعديل سريع لاسم الطفل.
+- الحفظ المباشر:
+  - يسجل ChildNote(type="VISITATION", status=...) في groups/{groupId}/childNotes.
+  - ينشئ رسالة واحدة مجمعة من نوع SYSTEM بصيغة [VISITATION_V1] في شات المجموعة، ومع كل طفل جديد يفتقده الخادم في الجلسة يتم تحديث نفس الرسالة مباشرة في مكانها (text و updatedAt فقط وفق قاعدة isValidLiveSystemReportUpdate).
+
+و) شاشة التقارير ولوحة الصدارة (FullClassLeaderboardScreen — أيقونة الكأس):
+- شجرة التقويم متعدد الاختيار (CalendarTreeDialog):
+  - سنوات (بدءاً من 2026) -> شهور (مع اسم الشهر القبطي المقابل) -> أسابيع السبت (YYYY-MM-W#).
+  - أزرار سريعة لاختيار الفترة: هذا الأسبوع، الأسبوع اللي فات، الأسبوع اللي قبله.
+- فلاتر متعددة الاختيار (Multi-Select):
+  - اختيار أكثر من بلوك/مكان.
+  - اختيار أكثر من طفل.
+  - اختيار أكثر من نوع كارت (بما فيها CUSTOM_ELDER كارت القمداء).
+  - خيار عرض الحضور لوحده (attendanceOnly).
+- عرض النتائج:
+  - ترتيب الأطفال مع ميداليات (ذهبي/فضي/برونزي) وتفصيل النقاط حسب كل نوع كارت.
+  - بطاقة ملخص الفترة أسفل الصفحة:
+    - عدد الحاضرين.
+    - عدد الغائبين.
+    - عدد النقاط في الفترة (حسب الفلاتر المختارة).
+    - مجموع نقاط التطبيق كله في الفترة المختارة (أسبوع أو شهر) بدون قيود الفلاتر الفرعية.
+
+ز) شاشة الرسائل والمحادثات (MessagesScreen):
+- قائمة المحادثات:
+  - محادثة الفصل الجماعية المثبتة بالأعلى (groups/{groupId}/chatMeta/main).
+  - المحادثات الخاصة 1-to-1 (dms/dm_{uidA}_{uidB}).
+  - شارة عدد الرسائل غير المقروءة (totalMessagesCount - localLastReadCount).
+  - بدء محادثة خاصة جديدة: إما اختيار خادم من الفصل، أو البحث بإيميل Gmail لأي مستخدم مسجل عبر emailDirectory/{emailKey}.
+- شاشة المحادثة:
+  - تحميل متدرج (Pagination: 30 رسالة في الصفحة orderBy('createdAt', 'desc')).
+  - إرسال نص (<= 1000 حرف)، صورة مضغوطة Base64 (<= 450KB حرف، أبعاد <= 1440px مع معاينة/تعديل قبل الإرسال)، أو رسالة صوتية Base64 (<= 100KB حرف، مدة 1..30 ثانية).
+  - حذف ناعم لرسائلك فقط (isDeleted: true, text: "تم حذف الرسالة", mediaBase64: "").
+  - إعادة توجيه رسالة (forwardedFromName).
+  - عرض أعضاء الفصل وتعيين أسماء مستعارة شخصية للخدام (users/{uid}.servantAliases).
+- عرض رسائل الـ SYSTEM الغنية (مهم جداً للتوافق مع تطبيق الموبايل):
+  1. تقرير الافتقاد المجمع ([VISITATION_V1]):
+     - هيدر بنفسجي "🏠 تقرير الافتقاد" + اسم الخادم والنطاق.
+     - بالأعلى: قائمة عمودية بخط صغير بأسماء من تم افتقادهم فقط (بدون صور).
+     - بالأسفل: شبكة من 3 أعمدة (صورة + رقم + اسم + ملاحظة) فقط لمن عملوا مشكلة / متابعة أو لم يتم افتقادهم.
+     - في الذيل: تصنيف الغير مفتقدين/المتابعة حسب اسم البلوك + عددهم + أرقامهم، ثم المجموع الكلي.
+  2. تقرير التحضير / الكروت ([ATTENDANCE_V3]):
+     - هيدر ملون واضح يحدد نوع التقرير بدقة (مثلاً "📋 تقرير الحضور" أو "🤫 تقرير كارت الهدوء" أو "🏅 تقرير كارت القمداء").
+     - شبكة من 3 أعمدة بصورة ورقم واسم للغائبين / من لم يأخذوا الكارت / أصحاب المشاكل.
+     - شريط مدمج بخط صغير بأسماء الحاضرين / من أخذوا الكارت.
+     - في الذيل: تصنيف الغائبين/المشاكل حسب اسم البلوك + عددهم + أرقامهم، ثم المجموع الكلي.
+     - حالة تقرير الاختلافات (DIFF|): هيدر "🔄 اختلافات تقرير ..." يعرض مقارنة حالة الخادم الأول مقابل الخادم الثاني لكل طفل مختلف فقط.
+  3. بطاقات الإشعارات الفردية للطفل (notificationCategory): ملونة حسب الفئة (CONFLICT برتقالي، ABSENT أحمر، COMMENT سماوي، VISITATION بنفسجي، MEMORIZATION فيروزي، CARD أخضر، SYSTEM نيلي).
+
+ح) شاشات المجموعة والإعدادات (GroupAndSettingsScreens):
+- تبويب المجموعة:
+  - كود الدعوة اليومي (<inviteCode>-<dailyToken>) مع زر نسخ ومشاركة وتجديد فوري.
+  - إدارة الدعوات (invitations).
+  - إدارة البلوكات (إنشاء/تعديل/حذف مع خيار نقل الأطفال لـ "بدون بلوك" أو حذفهم).
+  - قائمة الخدام: تعيين/إزالة مساعد أمين، حظر/فك حظر خادم، تعيين اسم مستعار شخصي، تعديل اسمك وصورتك ورقم تليفونك وظهوره.
+  - التبديل بين الفصول أو إنشاء/انضمام لفصل إضافي.
+- تبويب الإعدادات:
+  - الثيم (DARK / LIGHT)، حجم الواجهة (AUTO / MANUAL، معامل 0.5..2.0)، الوضع المضغوط (compactViewMode)، إظهار/إخفاء زر الإضافة العائم (showFloatingAddButton).
+  - اختيار الكروت الظاهرة لك شخصياً (enabledCards).
+  - سياسات الفصل (للأمين ومساعده): allowServantUndo، enforceWeeklyCardLimit، maxMonthlyPoints، attendanceIsCardOnly، showLeaderboard، autoStudentNumber.
+  - إعدادات "كارت القمداء" (للأمين ومساعده): تفعيل/إيقاف، الاسم، النقاط (0..100)، الإيموجي، اللون (customCardColorKey)، التكرار (WEEKLY مرة أسبوعياً / MONTHLY مرة شهرياً / ONCE_EVER مرة واحدة للأبد).
+  - إعداد رقم الهاتف والواتساب، مغادرة المجموعة، تسجيل الخروج.
+
+
+--------------------------------------------------------------------
+3. قاعدة البيانات (Cloud Firestore Schema)
+--------------------------------------------------------------------
+النوع: Cloud Firestore
+معرّف القاعدة (Database ID): ai-studio-android-69ef64c0-fb21-4e5d-8c5b-9e185b0c9dc1
+ملاحظة حاسمة: قواعد الأمان تطبق hasOnly(...) صارم على كل Collection — ممنوع إرسال أي حقل غير مذكور أدناه وإلا سترفض Firestore العملية فوراً (PERMISSION_DENIED).
+
+1) users/{userId} (ملف المستخدم الشخصي — معزول تماماً للمالك فقط)
+- userId: string (مطلوب، يساوي auth.uid)
+- displayName: string (مطلوب، 1..80 حرف)
+- email: string (مطلوب، 0..150 حرف)
+- groupId: string (مطلوب، 0..40 حرف — كود الفصل النشط أو "")
+- joinedGroupIds: string[] (اختياري، 0..25 عنصر)
+- enabledCards: string[] (مطلوب، 0..8 عناصر من أنواع الكروت)
+- collapsedBlockIds: string[] (اختياري، 0..50 عنصر)
+- hiddenBlockIds: string[] (اختياري، 0..50 عنصر)
+- compactViewMode: boolean (اختياري، افتراضي false)
+- themeId: string (اختياري، DARK أو LIGHT، حتى 40 حرف)
+- uiScaleMode: string (اختياري، AUTO أو MANUAL، حتى 20 حرف)
+- uiScaleFactor: number (اختياري، 0.5 إلى 2.0)
+- showFloatingAddButton: boolean (اختياري، افتراضي true)
+- servantAliases: map<string, string> (اختياري، حتى 100 مفتاح: uid -> alias)
+- createdAt: Timestamp (مطلوب، ثابت بعد الإنشاء)
+- updatedAt: Timestamp (مطلوب، serverTimestamp())
+
+2) emailDirectory/{emailKey} (فهرس البحث بالإيميل للمراسلة الخاصة)
+- صيغة الـ Doc ID (emailKey): "em_" + sha256Hex(email.trim().toLowerCase()).slice(0, 40) (قراءة get فقط، list ممنوع)
+- الحقول (كلها مطلوبة وفقط هذه):
+  - email: string (1..150)
+  - uid: string (== auth.uid)
+  - displayName: string (1..80)
+  - updatedAt: Timestamp
+
+3) groups/{groupId} (وثيقة الفصل — groupId == inviteCode)
+- inviteCode: string (مطلوب، == groupId، 1..20 حرف مثل KAM4X9P2)
+- name: string (مطلوب، 1..100 حرف)
+- adminId: string (مطلوب، uid الأمين الأساسي، ثابت)
+- adminName: string (مطلوب، 1..100 حرف)
+- assistantAdminIds: string[] (اختياري، 0..20 UIDs)
+- memberUids: string[] (مطلوب، 1..50 UIDs، يجب أن يحتوي adminId)
+- allowServantUndo: boolean (مطلوب)
+- enforceWeeklyCardLimit: boolean (مطلوب)
+- maxMonthlyPoints: int (مطلوب، 0..10000، 0 = بلا حد)
+- attendanceIsCardOnly: boolean (مطلوب)
+- showLeaderboard: boolean (مطلوب)
+- autoStudentNumber: boolean (مطلوب)
+- bannedUids: string[] (اختياري، 0..50 UIDs)
+- bannedServantEntries: string[] (اختياري، 0..50 بصيغة "uid|displayName")
+- dailyInviteToken: string (اختياري، 0..16 حرف — رمز 4 أحرف متجدد كل 24 ساعة)
+- inviteCodeUpdatedAtMillis: int (اختياري، >= 0، Epoch ms)
+- avatarBase64: string (اختياري، حتى 360000 حرف)
+- avatarHash: string (اختياري، حتى 64 حرف)
+- customCardEnabled: boolean (اختياري، تفعيل كارت القمداء)
+- customCardName: string (اختياري، حتى 40 حرف، الافتراضي: "كارت القمداء")
+- customCardPoints: int (اختياري، 0..100)
+- customCardIcon: string (اختياري، حتى 12 حرف مثل "🏅")
+- customCardColorKey: string (اختياري، حتى 24 حرف: GOLD, EMERALD, SKY, VIOLET, INDIGO, TEAL, ROSE)
+- customCardFrequency: string (اختياري، 'WEEKLY' | 'MONTHLY' | 'ONCE_EVER')
+- createdAt: Timestamp (مطلوب عند الإنشاء، ثابت)
+- updatedAt: Timestamp (مطلوب)
+
+4) المجموعات الفرعية داخل groups/{groupId}/...
+- invitations/{invitationId}:
+  groupId, groupName (1..80), adminId, inviteeName (1..80), inviteCode (== groupId), status ('PENDING'|'ACCEPTED'|'REJECTED'), acceptedByUid, memberUids?, createdAt, updatedAt.
+- blocks/{blockId} (بلوكات الخدام):
+  groupId, servantId (0..64), servantName (1..80), colorHex (1..24 مثل #3B82F6), sortOrder (int 0..500), memberUids?, createdAt, updatedAt.
+- students/{studentId} (الأطفال — حد أقصى عملي 150 طفل):
+  groupId, name (1..100), studentNumber (int 1..2000), blockId (0..80، "" = بدون بلوك), sortOrder (int 0..5000), position? (number -1e6..1e8), avatarInitials (0..10), avatarBase64? (<=360000), hasAvatar? (bool), avatarHash? (<=64), createdByUid (1..64), memberUids?, lastMemorizedText? (<=500), lastMemorizedBy? (<=80), lastMemorizedAtMillis? (int>=0), createdAt, updatedAt.
+- avatars/{studentId} (صور الأطفال محملة بشكل منفصل Lazy — Doc ID = studentId):
+  groupId, studentId (== docId), avatarBase64 (<=360000), avatarHash (<=64), updatedByUid, memberUids?, createdAt, updatedAt.
+- cardEvents/{eventId} (سجل منح الكروت):
+  groupId, studentId, studentName, cardType, points (مرتبطة بصرامة بـ cardType في الـ Rules!), servantId (== auth.uid عند الإنشاء), servantName, monthKey (YYYY-MM), weekKey (YYYY-MM-W#), memberUids?, createdAt, updatedAt.
+- monthlyBalances/{balanceId} (رصيد الطفل الشهري — Doc ID حتمي: {monthKey}_{studentId}):
+  groupId, studentId, studentName, monthKey, totalPoints (int 0..100000), eventsCount (int 0..10000), lastUpdatedByUid, memberUids?, createdAt, updatedAt.
+- members/{memberUid} (بروفايل الخادم داخل الفصل — Doc ID = uid):
+  uid (== memberUid), groupId, displayName (1..100), email?, phone? (<=24), primaryPhone?, secondaryPhone?, phoneVerified (إلزامي false في الـ Rules!), showPhone?, phoneHidden?, avatar?, hasAvatar?, avatarHash?, avatarBase64?, memberUids?, lastSeenAt? (Timestamp), createdAt, updatedAt.
+- chatMeta/main (بيانات شات المجموعة):
+  groupId, memberUids (مطلوب ويجب أن يشمل auth.uid), lastMessageId?, lastMessageText?, lastMessageType? (TEXT|IMAGE|AUDIO|SYSTEM), lastMessageSenderUid?, lastMessageSenderName?, lastMessageAt?, totalMessagesCount? (int>=0), updatedAt.
+- messages/{messageId} (رسائل شات المجموعة):
+  chatId?, groupId, senderUid (== auth.uid), senderName (1..100), type (TEXT|IMAGE|AUDIO|SYSTEM), text (1..1000 أو 1..4000 للـ SYSTEM), mediaBase64? (IMAGE <= 460000، AUDIO <= 100000), mediaUrl?, mediaMimeType?, imageWidth? (0..1600), imageHeight? (0..1600), audioDurationSec? (int 1..30 مطلوب مع AUDIO), notificationCategory?, childId?, childName?, childBlockName?, forwardedFromName?, isDeleted (false عند الإنشاء), memberUids (مطلوب ويشمل auth.uid), createdAt, updatedAt.
+- attendance/{attendanceId} (سجلات الحضور الأسبوعي — Doc ID حتمي إلزامي في الـ Rules: {weekKey}_{studentId}):
+  groupId?, studentId, studentName, status ('PRESENT'|'ABSENT'|'ISSUE'), weekKey (1..20), servantId (== auth.uid), servantName, note (0..200), memberUids (مطلوب 1..50), createdAt, updatedAt?.
+- childNotes/{noteId} (ملاحظات الطفل: تعليقات، محفوظات، افتقاد):
+  groupId, studentId, studentName, type ('COMMENT'|'MEMORIZATION'|'VISITATION'), text (1..500), status? (0..30 مثل VISITED|FOLLOWUP|NOT_VISITED), authorUid (== auth.uid), authorName (1..80), clientCreatedAtMillis? (int>=0), memberUids?, createdAt, updatedAt.
+
+5) dms/{chatId} و dms/{chatId}/messages/{messageId} (المحادثات الخاصة 1-to-1)
+- صيغة الـ chatId الحتمية (إلزامية):
+  const [a, b] = [uid1, uid2].sort();
+  const chatId = `dm_${a}_${b}`;
+- حقول dms/{chatId}: chatId?, groupId?, participants (مصفوفة من 2 UIDs بالضبط وتشمل auth.uid), participantNames? (map<uid, name>), lastMessageId?, lastMessageText?, lastMessageType?, lastMessageSenderUid?, lastMessageSenderName?, lastMessageAt?, totalMessagesCount?, createdAt?, updatedAt.
+- حقول dms/{chatId}/messages/{messageId}: نفس حقول رسائل المجموعة، مع استبدال memberUids بـ participants (مصفوفة من عنصرين تشمل auth.uid).
+
+
+--------------------------------------------------------------------
+4. نظام الـ Authentication
+--------------------------------------------------------------------
+- المزود الوحيد المفعّل: Google Sign-In عبر Firebase Authentication (GoogleAuthProvider + signInWithPopup أو signInWithRedirect على الويب؛ وفي الأندرويد يعمل بـ Jetpack CredentialManager).
+- ممنوع استخدام signInAnonymously() (غير مفعّل في المشروع وسيفشل).
+- تسلسل ما بعد الدخول (onAuthStateChanged):
+  1. التأكد من وجود وثيقة users/{uid}؛ وإن لم توجد يتم إنشاؤها بالحقول الإلزامية (enabledCards بجميع الكروت الـ 7 افتراضياً، themeId: "DARK"، groupId: "").
+  2. تحديث/إنشاء emailDirectory/{emailKey} ببريد المستخدم المطبّع واسمه و uid.
+  3. إذا وُجد groupId نشط، فتح اشتراكات onSnapshot على groups/{groupId} والمجموعات الفرعية (blocks, students, cardEvents, monthlyBalances, attendance, childNotes, members, invitations, chatMeta/main)، وتحديث lastSeenAt في groups/{groupId}/members/{uid} دورياً (heartbeat لحالة الأونلاين).
+
+
+--------------------------------------------------------------------
+5. نص الـ Firestore Security Rules الحالية كامل بالحرف
+--------------------------------------------------------------------
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isDocOwner(userId) {
+      return isSignedIn() && uid() == userId;
+    }
+
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
+    }
+
+    function isOptionalString(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isBoundedStringList(listVal, minSize, maxSize) {
+      return listVal is list && listVal.size() >= minSize && listVal.size() <= maxSize;
+    }
+
+    function isValidNumberPos(val) {
+      return (val is int || val is float) && val >= -1000000 && val <= 100000000;
+    }
+
+    // Group membership lookup on the parent /groups/{groupId} document.
+    // Every member whose UID is in groups/{groupId}.memberUids (or adminId) has full shared access
+    // to all students, blocks, cardEvents, monthlyBalances, and invitations in that group—
+    // even if a child or block was created before a new servant joined!
+    function isGroupMember(groupId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/groups/$(groupId)) &&
+        (
+          uid() in get(/databases/$(database)/documents/groups/$(groupId)).data.memberUids ||
+          get(/databases/$(database)/documents/groups/$(groupId)).data.adminId == uid() ||
+          (
+            'assistantAdminIds' in get(/databases/$(database)/documents/groups/$(groupId)).data &&
+            uid() in get(/databases/$(database)/documents/groups/$(groupId)).data.assistantAdminIds
+          )
+        );
+    }
+
+    // Admin check on the parent /groups/{groupId} document.
+    // Both the primary Group Admin (adminId) and appointed Assistant Admins (assistantAdminIds)
+    // hold full admin permissions across blocks, students, invitations, policies, and moderation.
+    function isGroupAdmin(groupId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/groups/$(groupId)) &&
+        (
+          get(/databases/$(database)/documents/groups/$(groupId)).data.adminId == uid() ||
+          (
+            'assistantAdminIds' in get(/databases/$(database)/documents/groups/$(groupId)).data &&
+            uid() in get(/databases/$(database)/documents/groups/$(groupId)).data.assistantAdminIds
+          )
+        );
+    }
+
+    function groupAllowsServantUndo(groupId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/groups/$(groupId)) &&
+        get(/databases/$(database)/documents/groups/$(groupId)).data.allowServantUndo == true;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+          'userId', 'displayName', 'email', 'groupId',
+          'enabledCards', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'displayName', 'email', 'groupId', 'joinedGroupIds',
+          'enabledCards', 'collapsedBlockIds', 'hiddenBlockIds',
+          'compactViewMode', 'themeId', 'uiScaleMode', 'uiScaleFactor',
+          'showFloatingAddButton', 'servantAliases', 'createdAt', 'updatedAt'
+        ]) &&
+        data.userId == uid() &&
+        isNonEmptyString(data.displayName, 80) &&
+        isOptionalString(data.email, 150) &&
+        isOptionalString(data.groupId, 40) &&
+        (!('joinedGroupIds' in data) || isBoundedStringList(data.joinedGroupIds, 0, 25)) &&
+        isBoundedStringList(data.enabledCards, 0, 8) &&
+        (!('collapsedBlockIds' in data) || isBoundedStringList(data.collapsedBlockIds, 0, 50)) &&
+        (!('hiddenBlockIds' in data) || isBoundedStringList(data.hiddenBlockIds, 0, 50)) &&
+        (!('compactViewMode' in data) || data.compactViewMode is bool) &&
+        (!('themeId' in data) || isOptionalString(data.themeId, 40)) &&
+        (!('uiScaleMode' in data) || isOptionalString(data.uiScaleMode, 20)) &&
+        (!('uiScaleFactor' in data) || ((data.uiScaleFactor is int || data.uiScaleFactor is float) && data.uiScaleFactor >= 0.5 && data.uiScaleFactor <= 2.0)) &&
+        (!('showFloatingAddButton' in data) || data.showFloatingAddButton is bool) &&
+        (!('servantAliases' in data) || (data.servantAliases is map && data.servantAliases.size() <= 100)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEmailDirectoryEntry(data) {
+      return data.keys().hasAll(['email', 'uid', 'displayName', 'updatedAt']) &&
+        data.keys().hasOnly(['email', 'uid', 'displayName', 'updatedAt']) &&
+        isNonEmptyString(data.email, 150) &&
+        data.uid == uid() &&
+        isNonEmptyString(data.displayName, 80) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGroup(data, groupId) {
+      return data.keys().hasAll([
+          'inviteCode', 'name', 'adminId', 'adminName', 'memberUids',
+          'allowServantUndo', 'enforceWeeklyCardLimit', 'maxMonthlyPoints',
+          'attendanceIsCardOnly', 'showLeaderboard', 'autoStudentNumber',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'inviteCode', 'name', 'adminId', 'adminName', 'assistantAdminIds', 'memberUids',
+          'allowServantUndo', 'enforceWeeklyCardLimit', 'maxMonthlyPoints',
+          'attendanceIsCardOnly', 'showLeaderboard', 'autoStudentNumber',
+          'bannedUids', 'bannedServantEntries', 'dailyInviteToken', 'inviteCodeUpdatedAtMillis',
+          'avatarBase64', 'avatarHash',
+          'customCardEnabled', 'customCardName', 'customCardPoints',
+          'customCardIcon', 'customCardColorKey', 'customCardFrequency',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.inviteCode == groupId &&
+        isNonEmptyString(data.inviteCode, 20) &&
+        isNonEmptyString(data.name, 100) &&
+        isNonEmptyString(data.adminId, 64) &&
+        isNonEmptyString(data.adminName, 100) &&
+        (!('assistantAdminIds' in data) || isBoundedStringList(data.assistantAdminIds, 0, 20)) &&
+        isBoundedStringList(data.memberUids, 1, 50) &&
+        data.adminId in data.memberUids &&
+        data.allowServantUndo is bool &&
+        data.enforceWeeklyCardLimit is bool &&
+        data.maxMonthlyPoints is int && data.maxMonthlyPoints >= 0 && data.maxMonthlyPoints <= 10000 &&
+        data.attendanceIsCardOnly is bool &&
+        data.showLeaderboard is bool &&
+        data.autoStudentNumber is bool &&
+        (!('bannedUids' in data) || isBoundedStringList(data.bannedUids, 0, 50)) &&
+        (!('bannedServantEntries' in data) || isBoundedStringList(data.bannedServantEntries, 0, 50)) &&
+        (!('dailyInviteToken' in data) || isOptionalString(data.dailyInviteToken, 16)) &&
+        (!('inviteCodeUpdatedAtMillis' in data) || (data.inviteCodeUpdatedAtMillis is int && data.inviteCodeUpdatedAtMillis >= 0)) &&
+        (!('avatarBase64' in data) || isOptionalString(data.avatarBase64, 360000)) &&
+        (!('avatarHash' in data) || isOptionalString(data.avatarHash, 64)) &&
+        (!('customCardEnabled' in data) || data.customCardEnabled is bool) &&
+        (!('customCardName' in data) || isOptionalString(data.customCardName, 40)) &&
+        (!('customCardPoints' in data) || (data.customCardPoints is int && data.customCardPoints >= 0 && data.customCardPoints <= 100)) &&
+        (!('customCardIcon' in data) || isOptionalString(data.customCardIcon, 12)) &&
+        (!('customCardColorKey' in data) || isOptionalString(data.customCardColorKey, 24)) &&
+        (!('customCardFrequency' in data) || data.customCardFrequency in ['WEEKLY', 'MONTHLY', 'ONCE_EVER']) &&
+        (!('createdAt' in data) || data.createdAt is timestamp) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidInvitation(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'groupName', 'adminId', 'inviteeName', 'inviteCode',
+          'status', 'acceptedByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'groupName', 'adminId', 'inviteeName', 'inviteCode',
+          'status', 'acceptedByUid', 'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isNonEmptyString(data.groupName, 80) &&
+        isNonEmptyString(data.adminId, 64) &&
+        isNonEmptyString(data.inviteeName, 80) &&
+        data.inviteCode == groupId &&
+        data.status in ['PENDING', 'ACCEPTED', 'REJECTED'] &&
+        isOptionalString(data.acceptedByUid, 64) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidServantBlock(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'servantId', 'servantName', 'colorHex',
+          'sortOrder', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'servantId', 'servantName', 'colorHex',
+          'sortOrder', 'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isOptionalString(data.servantId, 64) &&
+        isNonEmptyString(data.servantName, 80) &&
+        isNonEmptyString(data.colorHex, 24) &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 500 &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStudent(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'name', 'studentNumber', 'blockId',
+          'sortOrder', 'avatarInitials', 'createdByUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'name', 'studentNumber', 'blockId',
+          'sortOrder', 'position', 'avatarInitials', 'avatarBase64',
+          'hasAvatar', 'avatarHash', 'createdByUid',
+          'memberUids', 'lastMemorizedText', 'lastMemorizedBy', 'lastMemorizedAtMillis',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isNonEmptyString(data.name, 100) &&
+        data.studentNumber is int && data.studentNumber >= 1 && data.studentNumber <= 2000 &&
+        isOptionalString(data.blockId, 80) &&
+        data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 5000 &&
+        (!('position' in data) || isValidNumberPos(data.position)) &&
+        isOptionalString(data.avatarInitials, 10) &&
+        (!('avatarBase64' in data) || isOptionalString(data.avatarBase64, 360000)) &&
+        (!('hasAvatar' in data) || data.hasAvatar is bool) &&
+        (!('avatarHash' in data) || isOptionalString(data.avatarHash, 64)) &&
+        isNonEmptyString(data.createdByUid, 64) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        (!('lastMemorizedText' in data) || isOptionalString(data.lastMemorizedText, 500)) &&
+        (!('lastMemorizedBy' in data) || isOptionalString(data.lastMemorizedBy, 80)) &&
+        (!('lastMemorizedAtMillis' in data) || (data.lastMemorizedAtMillis is int && data.lastMemorizedAtMillis >= 0)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStudentAvatar(data, groupId, studentId) {
+      return data.keys().hasAll([
+          'groupId', 'studentId', 'avatarBase64', 'avatarHash',
+          'updatedByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'studentId', 'avatarBase64', 'avatarHash',
+          'updatedByUid', 'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        data.studentId == studentId &&
+        isNonEmptyString(data.studentId, 80) &&
+        isOptionalString(data.avatarBase64, 360000) &&
+        isOptionalString(data.avatarHash, 64) &&
+        isNonEmptyString(data.updatedByUid, 64) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCardPointsPair(cardType, points) {
+      return (cardType == 'ATTENDANCE' && points == 3) ||
+             (cardType == 'QUIET' && points == 5) ||
+             (cardType == 'PARTICIPATION' && points == 2) ||
+             (cardType == 'PRAISE' && points == 10) ||
+             (cardType == 'GOLD' && points == 20) ||
+             (cardType == 'MEMORIZATION' && points == 6) ||
+             (cardType == 'CONFESSION' && points == 4) ||
+             (cardType == 'CUSTOM_ELDER' && points is int && points >= 0 && points <= 100);
+    }
+
+    function isValidCardEvent(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'studentId', 'studentName', 'cardType', 'points',
+          'servantId', 'servantName', 'monthKey', 'weekKey',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'studentId', 'studentName', 'cardType', 'points',
+          'servantId', 'servantName', 'monthKey', 'weekKey',
+          'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isNonEmptyString(data.studentId, 80) &&
+        isNonEmptyString(data.studentName, 100) &&
+        isValidCardPointsPair(data.cardType, data.points) &&
+        isNonEmptyString(data.servantId, 64) &&
+        isNonEmptyString(data.servantName, 80) &&
+        isNonEmptyString(data.monthKey, 12) &&
+        isNonEmptyString(data.weekKey, 16) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMonthlyBalance(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'studentId', 'studentName', 'monthKey',
+          'totalPoints', 'eventsCount', 'lastUpdatedByUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'studentId', 'studentName', 'monthKey',
+          'totalPoints', 'eventsCount', 'lastUpdatedByUid',
+          'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isNonEmptyString(data.studentId, 80) &&
+        isNonEmptyString(data.studentName, 100) &&
+        isNonEmptyString(data.monthKey, 12) &&
+        data.totalPoints is int && data.totalPoints >= 0 && data.totalPoints <= 100000 &&
+        data.eventsCount is int && data.eventsCount >= 0 && data.eventsCount <= 10000 &&
+        isNonEmptyString(data.lastUpdatedByUid, 64) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGroupMemberProfile(data, groupId, memberUid) {
+      return data.keys().hasAll([
+          'uid', 'groupId', 'displayName', 'phoneVerified', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'groupId', 'displayName', 'email', 'phone', 'primaryPhone', 'secondaryPhone',
+          'phoneVerified', 'showPhone', 'phoneHidden', 'avatar', 'hasAvatar',
+          'avatarHash', 'avatarBase64', 'memberUids', 'lastSeenAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.uid == memberUid &&
+        data.groupId == groupId &&
+        isNonEmptyString(data.uid, 64) &&
+        isNonEmptyString(data.displayName, 100) &&
+        (!('email' in data) || isOptionalString(data.email, 150)) &&
+        (!('phone' in data) || isOptionalString(data.phone, 24)) &&
+        (!('primaryPhone' in data) || isOptionalString(data.primaryPhone, 24)) &&
+        (!('secondaryPhone' in data) || isOptionalString(data.secondaryPhone, 24)) &&
+        data.phoneVerified is bool &&
+        data.phoneVerified == false &&
+        (!('showPhone' in data) || data.showPhone is bool) &&
+        (!('phoneHidden' in data) || data.phoneHidden is bool) &&
+        (!('avatar' in data) || isOptionalString(data.avatar, 360000)) &&
+        (!('hasAvatar' in data) || data.hasAvatar is bool) &&
+        (!('avatarHash' in data) || isOptionalString(data.avatarHash, 64)) &&
+        (!('avatarBase64' in data) || isOptionalString(data.avatarBase64, 360000)) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        (!('lastSeenAt' in data) || data.lastSeenAt is timestamp) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessagePayloadByType(data) {
+      return (
+        (data.type == 'TEXT' &&
+          data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+          (!('mediaBase64' in data) || data.mediaBase64 == '')) ||
+        (data.type == 'SYSTEM' &&
+          data.text is string && data.text.size() > 0 && data.text.size() <= 4000 &&
+          (!('mediaBase64' in data) || data.mediaBase64 == '')) ||
+        (data.type == 'IMAGE' &&
+          data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+          'mediaBase64' in data && data.mediaBase64 is string &&
+          data.mediaBase64.size() > 0 && data.mediaBase64.size() <= 460000 &&
+          (!('mediaUrl' in data) || isOptionalString(data.mediaUrl, 500)) &&
+          (!('mediaMimeType' in data) || isOptionalString(data.mediaMimeType, 60)) &&
+          (!('imageWidth' in data) || (data.imageWidth is int && data.imageWidth >= 0 && data.imageWidth <= 1600)) &&
+          (!('imageHeight' in data) || (data.imageHeight is int && data.imageHeight >= 0 && data.imageHeight <= 1600))) ||
+        (data.type == 'AUDIO' &&
+          data.text is string && data.text.size() > 0 && data.text.size() <= 1000 &&
+          'mediaBase64' in data && data.mediaBase64 is string &&
+          data.mediaBase64.size() > 0 && data.mediaBase64.size() <= 100000 &&
+          (!('mediaUrl' in data) || isOptionalString(data.mediaUrl, 500)) &&
+          (!('mediaMimeType' in data) || isOptionalString(data.mediaMimeType, 60)) &&
+          'audioDurationSec' in data && data.audioDurationSec is int &&
+          data.audioDurationSec >= 1 && data.audioDurationSec <= 30)
+      );
+    }
+
+    function isValidGroupChatMeta(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'memberUids', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'lastMessageId', 'lastMessageText', 'lastMessageType',
+          'lastMessageSenderUid', 'lastMessageSenderName', 'lastMessageAt',
+          'totalMessagesCount', 'memberUids', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isBoundedStringList(data.memberUids, 1, 50) &&
+        uid() in data.memberUids &&
+        (!('lastMessageId' in data) || isOptionalString(data.lastMessageId, 120)) &&
+        (!('lastMessageText' in data) || isOptionalString(data.lastMessageText, 1000)) &&
+        (!('lastMessageType' in data) || data.lastMessageType in ['TEXT', 'IMAGE', 'AUDIO', 'SYSTEM']) &&
+        (!('lastMessageSenderUid' in data) || isOptionalString(data.lastMessageSenderUid, 64)) &&
+        (!('lastMessageSenderName' in data) || isOptionalString(data.lastMessageSenderName, 100)) &&
+        (!('lastMessageAt' in data) || data.lastMessageAt is timestamp) &&
+        (!('totalMessagesCount' in data) || (data.totalMessagesCount is int && data.totalMessagesCount >= 0)) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGroupChatMessageCreate(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'senderUid', 'senderName', 'type', 'text',
+          'isDeleted', 'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'chatId', 'groupId', 'senderUid', 'senderName', 'type', 'text',
+          'mediaBase64', 'mediaUrl', 'mediaMimeType', 'imageWidth', 'imageHeight', 'audioDurationSec',
+          'notificationCategory', 'childId', 'childName', 'childBlockName', 'forwardedFromName',
+          'isDeleted', 'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        data.senderUid == uid() &&
+        isNonEmptyString(data.senderName, 100) &&
+        data.type in ['TEXT', 'IMAGE', 'AUDIO', 'SYSTEM'] &&
+        isValidChatMessagePayloadByType(data) &&
+        (!('notificationCategory' in data) || isOptionalString(data.notificationCategory, 40)) &&
+        (!('childId' in data) || isOptionalString(data.childId, 80)) &&
+        (!('childName' in data) || isOptionalString(data.childName, 100)) &&
+        (!('childBlockName' in data) || isOptionalString(data.childBlockName, 100)) &&
+        (!('forwardedFromName' in data) || isOptionalString(data.forwardedFromName, 100)) &&
+        data.isDeleted == false &&
+        isBoundedStringList(data.memberUids, 1, 50) &&
+        uid() in data.memberUids &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessageSoftDelete(newData, oldData) {
+      return oldData.senderUid == uid() &&
+        newData.senderUid == oldData.senderUid &&
+        (!('groupId' in oldData) || newData.groupId == oldData.groupId) &&
+        newData.createdAt == oldData.createdAt &&
+        newData.isDeleted == true &&
+        newData.text == 'تم حذف الرسالة' &&
+        (!('mediaBase64' in newData) || newData.mediaBase64 == '') &&
+        newData.updatedAt is timestamp;
+    }
+
+    function isValidLiveSystemReportUpdate(newData, oldData) {
+      return oldData.senderUid == uid() &&
+        oldData.type == 'SYSTEM' &&
+        oldData.isDeleted == false &&
+        newData.senderUid == oldData.senderUid &&
+        newData.senderName == oldData.senderName &&
+        newData.type == 'SYSTEM' &&
+        newData.isDeleted == false &&
+        (!('groupId' in oldData) || newData.groupId == oldData.groupId) &&
+        newData.createdAt == oldData.createdAt &&
+        newData.diff(oldData).affectedKeys().hasOnly(['text', 'updatedAt']) &&
+        newData.text is string && newData.text.size() > 0 && newData.text.size() <= 4000 &&
+        newData.updatedAt is timestamp;
+    }
+
+    function isValidDmChatMeta(data, chatId) {
+      return data.keys().hasAll([
+          'participants', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'chatId', 'groupId', 'participants', 'participantNames',
+          'lastMessageId', 'lastMessageText', 'lastMessageType',
+          'lastMessageSenderUid', 'lastMessageSenderName', 'lastMessageAt',
+          'totalMessagesCount', 'createdAt', 'updatedAt'
+        ]) &&
+        (!('chatId' in data) || data.chatId == chatId) &&
+        (!('groupId' in data) || isOptionalString(data.groupId, 40)) &&
+        isBoundedStringList(data.participants, 2, 2) &&
+        uid() in data.participants &&
+        (!('participantNames' in data) || data.participantNames is map) &&
+        (!('lastMessageId' in data) || isOptionalString(data.lastMessageId, 120)) &&
+        (!('lastMessageText' in data) || isOptionalString(data.lastMessageText, 1000)) &&
+        (!('lastMessageType' in data) || data.lastMessageType in ['TEXT', 'IMAGE', 'AUDIO', 'SYSTEM']) &&
+        (!('lastMessageSenderUid' in data) || isOptionalString(data.lastMessageSenderUid, 64)) &&
+        (!('lastMessageSenderName' in data) || isOptionalString(data.lastMessageSenderName, 100)) &&
+        (!('lastMessageAt' in data) || data.lastMessageAt is timestamp) &&
+        (!('totalMessagesCount' in data) || (data.totalMessagesCount is int && data.totalMessagesCount >= 0)) &&
+        (!('createdAt' in data) || data.createdAt is timestamp) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDmChatMessageCreate(data, chatId) {
+      return data.keys().hasAll([
+          'senderUid', 'senderName', 'type', 'text',
+          'isDeleted', 'participants', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'chatId', 'groupId', 'senderUid', 'senderName', 'type', 'text',
+          'mediaBase64', 'mediaUrl', 'mediaMimeType', 'imageWidth', 'imageHeight', 'audioDurationSec',
+          'notificationCategory', 'childId', 'childName', 'childBlockName', 'forwardedFromName',
+          'isDeleted', 'participants', 'createdAt', 'updatedAt'
+        ]) &&
+        (!('chatId' in data) || data.chatId == chatId) &&
+        (!('groupId' in data) || isOptionalString(data.groupId, 40)) &&
+        data.senderUid == uid() &&
+        isNonEmptyString(data.senderName, 100) &&
+        data.type in ['TEXT', 'IMAGE', 'AUDIO', 'SYSTEM'] &&
+        isValidChatMessagePayloadByType(data) &&
+        (!('notificationCategory' in data) || isOptionalString(data.notificationCategory, 40)) &&
+        (!('childId' in data) || isOptionalString(data.childId, 80)) &&
+        (!('childName' in data) || isOptionalString(data.childName, 100)) &&
+        (!('childBlockName' in data) || isOptionalString(data.childBlockName, 100)) &&
+        (!('forwardedFromName' in data) || isOptionalString(data.forwardedFromName, 100)) &&
+        data.isDeleted == false &&
+        isBoundedStringList(data.participants, 2, 2) &&
+        uid() in data.participants &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAttendanceRecord(data, groupId, attendanceId) {
+      return data.keys().hasAll([
+          'studentId', 'studentName', 'status', 'weekKey',
+          'servantId', 'servantName', 'note', 'createdAt', 'memberUids'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'studentId', 'studentName', 'status', 'weekKey',
+          'servantId', 'servantName', 'note', 'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        (!('groupId' in data) || data.groupId == groupId) &&
+        attendanceId == (data.weekKey + '_' + data.studentId) &&
+        isNonEmptyString(data.studentId, 80) &&
+        isNonEmptyString(data.studentName, 100) &&
+        data.status in ['PRESENT', 'ABSENT', 'ISSUE'] &&
+        isNonEmptyString(data.weekKey, 20) &&
+        isNonEmptyString(data.servantId, 64) &&
+        isNonEmptyString(data.servantName, 80) &&
+        isOptionalString(data.note, 200) &&
+        isBoundedStringList(data.memberUids, 1, 50) &&
+        data.createdAt is timestamp &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidChildNote(data, groupId) {
+      return data.keys().hasAll([
+          'groupId', 'studentId', 'studentName', 'type', 'text',
+          'authorUid', 'authorName', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'groupId', 'studentId', 'studentName', 'type', 'text',
+          'status', 'authorUid', 'authorName', 'clientCreatedAtMillis',
+          'memberUids', 'createdAt', 'updatedAt'
+        ]) &&
+        data.groupId == groupId &&
+        isNonEmptyString(data.studentId, 80) &&
+        isNonEmptyString(data.studentName, 100) &&
+        data.type in ['COMMENT', 'MEMORIZATION', 'VISITATION'] &&
+        isNonEmptyString(data.text, 500) &&
+        (!('status' in data) || isOptionalString(data.status, 30)) &&
+        data.authorUid == uid() &&
+        isNonEmptyString(data.authorName, 80) &&
+        (!('clientCreatedAtMillis' in data) || (data.clientCreatedAtMillis is int && data.clientCreatedAtMillis >= 0)) &&
+        (!('memberUids' in data) || isBoundedStringList(data.memberUids, 1, 50)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // 1. User Profiles (Strict Owner Isolation for PII & Personal Preferences)
+    match /users/{userId} {
+      allow get: if isDocOwner(userId);
+      allow list: if false;
+      allow create: if isDocOwner(userId) && isValidUserProfile(incoming());
+      allow update: if isDocOwner(userId) &&
+        isValidUserProfile(incoming()) &&
+        (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt);
+      allow delete: if isDocOwner(userId);
+    }
+
+    // 1b. Email Lookup Directory (exact get only; no list scraping)
+    match /emailDirectory/{emailKey} {
+      allow get: if isSignedIn() && isValidId(emailKey);
+      allow list: if false;
+      allow create: if isSignedIn() && isValidId(emailKey) && isValidEmailDirectoryEntry(incoming());
+      allow update: if isSignedIn() && isValidId(emailKey) &&
+        existing().uid == uid() &&
+        isValidEmailDirectoryEntry(incoming());
+      allow delete: if isSignedIn() && existing().uid == uid();
+    }
+
+    // 2. Groups (Admin + up to 6 Servants)
+    match /groups/{groupId} {
+      // Any signed-in user who knows the exact inviteCode (document ID) can fetch the group to join it.
+      allow get: if isSignedIn();
+      // Listing groups is only allowed for groups where the user is already a member.
+      allow list: if isSignedIn() && uid() in existing().memberUids;
+
+      allow create: if isSignedIn() &&
+        incoming().adminId == uid() &&
+        'createdAt' in incoming() &&
+        isValidGroup(incoming(), groupId);
+
+      // Primary Admin can update all fields including assistantAdminIds;
+      // Assistant Admins can update policies, invite tokens, bans, avatar, and memberUids (except changing adminId/assistantAdminIds or banning primary admin);
+      // Regular members can update non-policy fields (e.g. avatar or leaving) without touching policies/bans/assistants;
+      // Joining non-banned servants can append ONLY their own UID to memberUids.
+      allow update: if isSignedIn() &&
+        isValidGroup(incoming(), groupId) &&
+        incoming().adminId == existing().adminId &&
+        incoming().inviteCode == existing().inviteCode &&
+        (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt) &&
+        (
+          existing().adminId == uid() ||
+          (
+            'assistantAdminIds' in existing() &&
+            uid() in existing().assistantAdminIds &&
+            !incoming().diff(existing()).affectedKeys().hasAny(['assistantAdminIds']) &&
+            !('bannedUids' in incoming() && existing().adminId in incoming().bannedUids)
+          ) ||
+          (
+            !incoming().diff(existing()).affectedKeys().hasAny([
+              'assistantAdminIds', 'bannedUids', 'bannedServantEntries',
+              'dailyInviteToken', 'inviteCodeUpdatedAtMillis', 'name',
+              'allowServantUndo', 'enforceWeeklyCardLimit', 'maxMonthlyPoints',
+              'attendanceIsCardOnly', 'showLeaderboard', 'autoStudentNumber',
+              'customCardEnabled', 'customCardName', 'customCardPoints',
+              'customCardIcon', 'customCardColorKey', 'customCardFrequency'
+            ]) &&
+            (
+              uid() in existing().memberUids ||
+              (
+                uid() in incoming().memberUids &&
+                !('bannedUids' in existing() && uid() in existing().bannedUids) &&
+                incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+                incoming().memberUids.hasAll(existing().memberUids)
+              )
+            )
+          )
+        );
+
+      allow delete: if isSignedIn() && existing().adminId == uid();
+
+      // 2a. Group Invitations
+      match /invitations/{invitationId} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupAdmin(groupId) && isValidInvitation(incoming(), groupId);
+        allow update: if isGroupMember(groupId) &&
+          isValidInvitation(incoming(), groupId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().adminId == existing().adminId &&
+          incoming().createdAt == existing().createdAt;
+        allow delete: if isGroupAdmin(groupId);
+      }
+
+      // 2b. Servant Blocks
+      // Read/List: Any member of the group (queried by groupId).
+      // Create & Delete: Strictly Group Admin ONLY.
+      // Update: Group Admin OR assigned servant updating only their own servantName / claiming unassigned block.
+      match /blocks/{blockId} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupAdmin(groupId) && isValidServantBlock(incoming(), groupId);
+        allow update: if isValidServantBlock(incoming(), groupId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().createdAt == existing().createdAt &&
+          (
+            isGroupAdmin(groupId) ||
+            (
+              isGroupMember(groupId) &&
+              existing().servantId == uid() &&
+              incoming().servantId == existing().servantId &&
+              incoming().colorHex == existing().colorHex &&
+              incoming().sortOrder == existing().sortOrder
+            )
+          );
+        allow delete: if isGroupAdmin(groupId);
+      }
+
+      // 2c. Students (Children)
+      // Read/List: Any member of the group (queried by groupId — no stale memberUids array dependency!).
+      // Create/Update: Any member of the group (supports adding, editing, moving blocks, and fractional position).
+      // Delete: Strictly Group Admin ONLY.
+      match /students/{studentId} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupMember(groupId) &&
+          isValidStudent(incoming(), groupId);
+        allow update: if isGroupMember(groupId) &&
+          isValidStudent(incoming(), groupId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().createdAt == existing().createdAt;
+        allow delete: if isGroupAdmin(groupId);
+      }
+
+      // 2d. Card Events (7 Approved Cards Audit Log)
+      // Read/List: Any member of the group.
+      // Create/Update: Any member of the group.
+      // Delete (Undo): Group Admin OR Servant who recorded the event when allowServantUndo is enabled.
+      match /cardEvents/{eventId} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupMember(groupId) &&
+          incoming().servantId == uid() &&
+          isValidCardEvent(incoming(), groupId);
+        allow update: if isGroupMember(groupId) &&
+          isValidCardEvent(incoming(), groupId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().cardType == existing().cardType &&
+          incoming().points == existing().points;
+        allow delete: if isGroupAdmin(groupId) ||
+          (
+            isGroupMember(groupId) &&
+            existing().servantId == uid() &&
+            groupAllowsServantUndo(groupId)
+          );
+      }
+
+      // 2e. Monthly Balances
+      match /monthlyBalances/{balanceId} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupMember(groupId) &&
+          isValidMonthlyBalance(incoming(), groupId);
+        allow update: if isGroupMember(groupId) &&
+          isValidMonthlyBalance(incoming(), groupId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().studentId == existing().studentId &&
+          incoming().monthKey == existing().monthKey;
+        allow delete: if isGroupAdmin(groupId);
+      }
+
+      // 2f. Student Avatars (Lazy-loaded separate collection per child)
+      match /avatars/{studentId} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupMember(groupId) &&
+          isValidStudentAvatar(incoming(), groupId, studentId);
+        allow update: if isGroupMember(groupId) &&
+          isValidStudentAvatar(incoming(), groupId, studentId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().studentId == existing().studentId;
+        allow delete: if isGroupMember(groupId);
+      }
+
+      // 2g. Group Servant Member Profiles (WhatsApp-style header profile above each block)
+      // Read/List: Strictly members of the same group ONLY.
+      // Create/Update: Strictly the servant who owns `memberUid` (`isDocOwner(memberUid)`) AND is a member of the group.
+      // Delete: The servant themselves OR the Group Admin.
+      match /members/{memberUid} {
+        allow get, list: if isGroupMember(groupId);
+        allow create: if isGroupMember(groupId) &&
+          isDocOwner(memberUid) &&
+          isValidGroupMemberProfile(incoming(), groupId, memberUid);
+        allow update: if isGroupMember(groupId) &&
+          isDocOwner(memberUid) &&
+          isValidGroupMemberProfile(incoming(), groupId, memberUid) &&
+          incoming().uid == existing().uid &&
+          incoming().groupId == existing().groupId;
+        allow delete: if isDocOwner(memberUid) || isGroupAdmin(groupId);
+      }
+
+      // 2h. Group Chat Metadata (groups/{groupId}/chatMeta/main)
+      // Verified directly via `memberUids` on the document without requiring `get()`.
+      match /chatMeta/{metaId} {
+        allow get, list: if isSignedIn() && (
+          resource == null ||
+          ('memberUids' in existing() && uid() in existing().memberUids) ||
+          isGroupMember(groupId)
+        );
+        allow create, update: if isSignedIn() && isValidGroupChatMeta(incoming(), groupId);
+        allow delete: if false;
+      }
+
+      // 2i. Group Chat Messages (groups/{groupId}/messages/{messageId})
+      // Verified directly via `memberUids` on the document without requiring `get()`.
+      match /messages/{messageId} {
+        allow get, list: if isSignedIn() && (
+          ('memberUids' in existing() && uid() in existing().memberUids) ||
+          isGroupMember(groupId)
+        );
+        allow create: if isSignedIn() && isValidGroupChatMessageCreate(incoming(), groupId);
+        allow update: if isSignedIn() &&
+          (('memberUids' in existing() && uid() in existing().memberUids) || isGroupMember(groupId)) &&
+          (
+            isValidChatMessageSoftDelete(incoming(), existing()) ||
+            isValidLiveSystemReportUpdate(incoming(), existing())
+          );
+        allow delete: if false;
+      }
+
+      // 2j. Smart Swipe Attendance Records (groups/{groupId}/attendance/{weekKey}_{studentId})
+      // Read/List: Group members (via memberUids or group membership).
+      // Create: Any group member (servantId == uid() and status in ['PRESENT', 'ABSENT', 'ISSUE']).
+      // Update: Only the servant who recorded it OR the Group Admin (الأمين فقط يعدّل تسجيل خادم تاني).
+      // Delete: Group Admin can delete any record, and a Servant can delete their own record for Undo.
+      match /attendance/{attendanceId} {
+        allow get, list: if isSignedIn() && (
+          ('memberUids' in existing() && uid() in existing().memberUids) ||
+          isGroupMember(groupId)
+        );
+        allow create: if isGroupMember(groupId) &&
+          incoming().servantId == uid() &&
+          isValidAttendanceRecord(incoming(), groupId, attendanceId);
+        allow update: if isGroupMember(groupId) &&
+          incoming().servantId == uid() &&
+          isValidAttendanceRecord(incoming(), groupId, attendanceId) &&
+          incoming().studentId == existing().studentId &&
+          incoming().weekKey == existing().weekKey &&
+          (existing().servantId == uid() || isGroupAdmin(groupId));
+        allow delete: if isGroupAdmin(groupId) ||
+          (isGroupMember(groupId) && existing().servantId == uid());
+      }
+
+      // 2k. Shared Child Notes (Comments, Memorization progress, Visitation follow-ups)
+      match /childNotes/{noteId} {
+        allow get, list: if isSignedIn() && (
+          ('memberUids' in existing() && uid() in existing().memberUids) ||
+          isGroupMember(groupId)
+        );
+        allow create: if isGroupMember(groupId) && isValidChildNote(incoming(), groupId);
+        allow update: if (
+            isGroupAdmin(groupId) ||
+            (isGroupMember(groupId) && existing().authorUid == uid())
+          ) &&
+          isValidChildNote(incoming(), groupId) &&
+          incoming().groupId == existing().groupId &&
+          incoming().studentId == existing().studentId &&
+          incoming().authorUid == existing().authorUid &&
+          incoming().createdAt == existing().createdAt;
+        allow delete: if isGroupAdmin(groupId) ||
+          (isGroupMember(groupId) && existing().authorUid == uid());
+      }
+    }
+
+    // 3. Private Direct Message Rooms (dms/{chatId} where chatId = dm_{uidA}_{uidB} sorted)
+    // Authorized via deterministic path `uid() in chatId.split('_')` or `participants` array without `get()`.
+    match /dms/{chatId} {
+      allow get: if isSignedIn() && (
+        resource == null ||
+        (uid() in chatId.split('_')) ||
+        ('participants' in existing() && uid() in existing().participants)
+      );
+      allow list: if isSignedIn() && uid() in existing().participants;
+      allow create: if isSignedIn() && isValidDmChatMeta(incoming(), chatId);
+      allow update: if isSignedIn() &&
+        (
+          (uid() in chatId.split('_')) ||
+          ('participants' in existing() && uid() in existing().participants)
+        ) &&
+        (!('participants' in existing()) || incoming().participants == existing().participants) &&
+        isValidDmChatMeta(incoming(), chatId);
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow get, list: if isSignedIn() && (
+          (uid() in chatId.split('_')) ||
+          ('participants' in existing() && uid() in existing().participants)
+        );
+        allow create: if isSignedIn() && isValidDmChatMessageCreate(incoming(), chatId);
+        allow update: if isSignedIn() &&
+          (
+            (uid() in chatId.split('_')) ||
+            ('participants' in existing() && uid() in existing().participants)
+          ) &&
+          isValidChatMessageSoftDelete(incoming(), existing());
+        allow delete: if false;
+      }
+    }
+  }
+}
+
+
+--------------------------------------------------------------------
+6. الـ APIs والخدمات الخارجية ومواضع الإعدادات
+--------------------------------------------------------------------
+- لا يوجد أي استخدام لـ Gemini API أو أي نموذج ذكاء اصطناعي في التطبيق (ملف .env.example يحتوي # GEMINI_API_KEY معلّقاً فقط وغير مستخدم).
+- لا يوجد استخدام لـ Firebase Storage: جميع الصور (صور الأطفال/الخدام/الجروب/الشات) والرسائل الصوتية تُضغط وتُخزن كـ Base64 داخل مستندات Firestore للعمل مجاناً على خطة Spark.
+- الخدمات المستخدمة فعلياً:
+  1. Firebase Authentication & Cloud Firestore — الإعدادات موجودة في app/google-services.json و app/src/main/res/values/firebase_applet_config.xml (على الويب تُوضع قيم firebaseConfig في .env بـ VITE_FIREBASE_*).
+  2. روابط WhatsApp و الهاتف: روابط مباشرة من المتصفح https://wa.me/<digits> و tel:<internationalPhone> بدون أي API key.
+  3. (خاص بالأندرويد فقط ولا يُنقل للويب): GitHubSmartSyncEngine كان يفحص JSON من GitHub Releases لتحديث ملف APK — غير مطلوب في تطبيق الويب.
+
+
+--------------------------------------------------------------------
+7. المكتبات والـ Packages المستخدمة
+--------------------------------------------------------------------
+في تطبيق الأندرويد الأصلي:
+- Kotlin + Jetpack Compose (Material 3 + Extended Icons) + Navigation Compose (kotlinx-serialization-json)
+- Firebase BoM (firebase-auth, firebase-firestore)
+- AndroidX Credentials (credentials, credentials-play-services-auth, googleid)
+- Coroutines (kotlinx-coroutines-android, kotlinx-coroutines-play-services)
+- DataStore Preferences (للكاش المحلي وإعدادات الأوفلاين)
+
+البدائل المقترحة لتطبيق الويب (React + Vite):
+- react, react-dom, typescript, vite
+- firebase (v10+ modular SDK: firebase/app, firebase/auth, firebase/firestore)
+- tailwindcss + clsx / tailwind-merge
+- lucide-react (للأيقونات)
+- react-router-dom (أو إدارة Tabs/Modal نظيفة)
+- browser-image-compression أو Canvas API مدمج (لضغط الصور لـ JPEG Base64 ضمن حدود Firestore Rules)
+- Web MediaRecorder API (لتسجيل الرسائل الصوتية القصيرة 1..30 ثانية وضغطها ضمن 100KB Base64)
+
+
+--------------------------------------------------------------------
+8. التصميم العام (الألوان، الخطوط، اللغة، الاتجاه)
+--------------------------------------------------------------------
+اللغة والاتجاه: العربية (lang="ar" dir="rtl") بشكل كامل؛ الأرقام والتواريخ والرموز متوافقة مع العربية.
+الخطوط (Google Fonts):
+- Cairo (400, 500, 600, 700, 800): الخط الأساسي لكل النصوص العربية والواجهات.
+- Inter (400, 500, 600, 700): للأرقام الكبيرة، الإحصائيات (KPIs)، الترتيب، وكود الدعوة.
+
+أ) لوحة الألوان (Mercury x Linear Design System):
+- Background:         DARK #07080D | LIGHT #FBFCFD
+- Surface:            DARK #0F1017 | LIGHT #FFFFFF
+- Surface Variant:    DARK #161822 | LIGHT #F3F4FC
+- Surface Elevated:   DARK #1D202E | LIGHT #EAEBF7
+- Border / Hairline:  DARK #252838 | LIGHT #D7DAE8
+- Border Strong:      DARK #33384D | LIGHT #C3C7DC
+- Primary (Indigo):   DARK #5E6AD2 | LIGHT #4B5CE5
+- On Primary:         DARK #FFFFFF | LIGHT #FFFFFF
+- Primary Container:  DARK #1E2347 | LIGHT #E8ECFF
+- Secondary:          DARK #9CB4E8 | LIGHT #554E7B
+- Tertiary (Sky):     DARK #38BDF8 | LIGHT #0284C7
+- Text Primary:       DARK #F7F8F8 | LIGHT #1C1A30
+- Text Secondary:     DARK #9BA1B0 | LIGHT #554E7B
+- Text Muted:         DARK #686E7E | LIGHT #7A7696
+- Error / Danger:     DARK #E55353 | LIGHT #C82838
+- Online / Success:   DARK #22C57E | LIGHT #158050
+- Warning / Offline:  DARK #EAB34B | LIGHT #B45309
+- Medals (Gold):      DARK #EAB34B | LIGHT #C98212
+- Medals (Silver):    DARK #9BA1B0 | LIGHT #64748B
+- Medals (Bronze):    DARK #F28B50 | LIGHT #D97706
+
+ب) ألوان البلوكات القياسية (BlockColorPreset):
+#3B82F6 (أزرق) | #10B981 (أخضر زمردي) | #8B5CF6 (بنفسجي) | #F59E0B (كهرماني) | #F43F5E (وردي) | #06B6D4 (سماوي) | #F97316 (برتقالي)
+
+ج) الكروت الـ 7 القياسية + كارت القمداء (CardType):
+- ATTENDANCE    | الحضور      | 3 نقاط     | ✓  | EMERALD (#22C57E / #159A5E)
+- QUIET         | الهدوء      | 5 نقاط     | 🤫 | SKY     (#38BDF8 / #0284C7)
+- PARTICIPATION | المشاركة    | 2 نقاط     | ✋ | VIOLET  (#8B7CF6 / #6D5CE7)
+- PRAISE        | التسبحة     | 10 نقاط    | 🎵 | INDIGO  (#5E6AD2 / #4B5CE5)
+- GOLD          | الذهب       | 20 نقطة    | ⭐ | GOLD    (#EAB34B / #C98212)
+- MEMORIZATION  | المحفوظات   | 6 نقاط     | 📖 | TEAL    (#2DD4BF / #0D9488)
+- CONFESSION    | الاعتراف    | 4 نقاط     | 🕊️ | ROSE    (#F472B6 / #DB2777)
+- CUSTOM_ELDER  | كارت القمداء | 0..100 نقطة | 🏅 | حسب customCardColorKey
+
+
+--------------------------------------------------------------------
+9. المنطق الخاص والقواعد الحرجة (يجب تنفيذها بنفس الشكل تماماً)
+--------------------------------------------------------------------
+1. تقويم أسابيع السبت + التقويم القبطي (SaturdayCalendarHelper):
+   - يبدأ كل أسبوع جديد داخل الشهر يوم 1 من الشهر ثم عند كل يوم سبت الساعة 12:00 منتصف الليل.
+   - صيغة مفتاح الشهر: YYYY-MM (مثل 2026-11).
+   - صيغة مفتاح الأسبوع: YYYY-MM-W# (مثل 2026-11-W3).
+   - تحويل التاريخ الميلادي إلى قبطي (تقويم الشهداء) يتم فلكياً عبر Julian Day Number (بداية العصر القبطي JDN = 1825030 = 1 توت سنة 1 للشهداء = 29 أغسطس 284م يولياني)، مع الشهور القبطية الـ 13 (توت حتى النسيء).
+
+2. معرّفات الوثائق الحتمية (Deterministic Document IDs):
+   - groups/{inviteCode} (حيث inviteCode == groupId).
+   - groups/{groupId}/attendance/{weekKey}_{studentId} (مفروض بصرامة في الـ Rules).
+   - groups/{groupId}/monthlyBalances/{monthKey}_{studentId}.
+   - groups/{groupId}/avatars/{studentId}.
+   - groups/{groupId}/members/{uid}.
+   - groups/{groupId}/chatMeta/main.
+   - dms/dm_{sortedUidA}_{sortedUidB}.
+   - emailDirectory/em_{sha256Hex(normalizedEmail).slice(0, 40)}.
+
+3. قواعد منح الكروت وتحديث الرصيد الشهري الذري:
+   - عند منح كارت: التحقق من enforceWeeklyCardLimit (لا يتكرر نفس الكارت لنفس الطفل في نفس weekKey)، ومن maxMonthlyPoints، ومن تكرار CUSTOM_ELDER (WEEKLY / MONTHLY / ONCE_EVER).
+   - عند إضافة أو حذف cardEvent يجب تحديث monthlyBalances/{monthKey}_{studentId} في نفس العملية (totalPoints, eventsCount, lastUpdatedByUid) بحيث لا تنزل القيم تحت 0.
+
+4. صيغ رسائل التقارير المتبادلة مع تطبيق الموبايل (Wire Formats):
+   أ) تقرير التحضير والكروت [ATTENDANCE_V3]:
+      [ATTENDANCE_V3]
+      S|<اسم الخادم>
+      T|<ATTENDANCE_ONLY أو cardType.id>
+      TL|<عنوان التقرير مثل: تقرير الحضور أو تقرير كارت الهدوء>
+      IC|<أيقونة مثل 📋 أو 🤫>
+      CK|<مفتاح اللون مثل EMERALD أو SKY>
+      PL|<اسم حاضر1 • اسم حاضر2 • ...>
+      A|<studentId>|<studentNumber>|<studentName>
+      N|<studentId>|<studentNumber>|<studentName>|<cardTitle>
+      I|<studentId>|<studentNumber>|<studentName>|<ملاحظة المشكلة>
+
+      وعند وجود اختلافات ضد خادم سابق، يُضاف سطر DIFF|<اسم الخادم الأول> وأسطر:
+      D|<studentId>|<studentNumber>|<studentName>|<حالة الخادم الأول>|<حالة الخادم الثاني>|<ملاحظة اختيارية>
+
+   ب) تقرير الافتقاد المجمع المتحدث لحظياً [VISITATION_V1]:
+      [VISITATION_V1]
+      S|<اسم الخادم>
+      B|<اسم البلوك أو كل الفصل>
+      V|<studentId>|<studentNumber>|<studentName>
+      F|<studentId>|<studentNumber>|<studentName>|<ملاحظة المتابعة>
+      U|<studentId>|<studentNumber>|<studentName>
+
+      (تحديث هذه الرسالة يتم بـ updateDoc على الحقلين text و updatedAt فقط لتوافق isValidLiveSystemReportUpdate!)
+
+   - يجب أن يدعم عارض الرسائل في الويب تحليل [VISITATION_V1] و [ATTENDANCE_V3] (و [ATTENDANCE_V2] القديم) حتى تظهر رسائل الموبايل والويب بنفس الشكل الجمالي المتطابق.
+
+5. صور الأطفال المتعددة (Packed Avatar Format):
+   - يمكن أن يحتوي avatarBase64 في avatars/{studentId} على صورة واحدة (Base64 خام بدون prefix data:image/...) أو عدة صور مفصولة بالفاصل ||| (الصورة الأولى هي الأساسية). عند العرض أضف data:image/jpeg;base64, إذا لم يبدأ بـ data:. الحد الأقصى للنص 360000 حرف.
+
+6. الترتيب الكسري للأطفال (Fractional Positioning):
+   - ترتيب الطفل الفعلي = position != 0 ? position : (sortOrder * 1000 + studentNumber). عند السحب وإعادة الترتيب بين طفلين يتم حساب المتوسط (prev + next) / 2 لتحديث مستند واحد فقط دون إعادة ترقيم الباقي.
+
+7. كود الدعوة اليومي:
+   - الصيغة <inviteCode>-<dailyToken>؛ مدة الصلاحية 24 ساعة من inviteCodeUpdatedAtMillis.
+   - دالة التحليل parseInviteCodeInput: تزيل المسافات وتحول لـ Uppercase وتفصل عند - (وإذا كُتب بدون - وكان يبدأ بـ KAM وطوله > 8، أول 8 أحرف هي inviteCode والباقي dailyToken).
+
+8. حقول إلزامية دقيقة في الـ Rules:
+   - في members/{uid} يجب أن يكون phoneVerified: false دائماً وإلا سترفض Firestore الكتابة.
+   - في chatMeta/main و messages/{id} و attendance/{id} يجب تمرير memberUids (وتضم auth.uid).
+   - في الحذف الناعم لرسائل الشات يجب أن يكون text: "تم حذف الرسالة" بالحرف و isDeleted: true و mediaBase64: "".
+
+
+--------------------------------------------------------------------
+10. هيكل ملفات مقترح للويب اب (React + TypeScript + Vite)
+--------------------------------------------------------------------
+kam-web/
+├── index.html                        # dir="rtl" lang="ar" + Google Fonts (Cairo & Inter)
+├── .env.example                      # VITE_FIREBASE_API_KEY, ... (بدون أسرار حقيقية)
+├── package.json
+├── tailwind.config.ts                # ألوان Mercury x Linear (Dark & Light) + خطوط Cairo/Inter
+└── src/
+    ├── main.tsx
+    ├── App.tsx                       # Auth Gate + Group Onboarding Gate + Main Layout (BottomNav / SideRail)
+    ├── lib/
+    │   ├── firebase.ts               # initializeApp + getAuth + getFirestore(app, FIRESTORE_DATABASE_ID)
+    │   ├── calendar.ts               # SaturdayCalendarHelper + التحويل القبطي (JDN)
+    │   ├── arabic.ts                 # normalizeArabicName + extractInitials + toArabicDigits
+    │   ├── phone.ts                  # PhoneNumberFormatHelper + wa.me links
+    │   ├── media.ts                  # ضغط الصور (Base64 <= 360KB/450KB) + فاصل ||| + تسجيل الصوت
+    │   └── reportFormats.ts          # بناء وتحليل [ATTENDANCE_V3], DIFF|, [VISITATION_V1] + تجميع البلوكات
+    ├── types/
+    │   ├── kam.ts                    # UserProfile, Group, ServantBlock, Student, CardEvent, MonthlyBalance, AttendanceRecord, ChildNote
+    │   └── chat.ts                   # ChatMessage, GroupChatMeta, DmRoom, NotificationCategory
+    ├── services/
+    │   ├── authService.ts            # Google Sign-In + ensureUserProfile + emailDirectory SHA-256
+    │   ├── groupService.ts           # Create/Join group, daily token, blocks, members, bans, policies, custom card
+    │   ├── studentService.ts         # CRUD students, bulk import, lazy avatars, fractional reorder, childNotes
+    │   ├── cardAttendanceService.ts  # Award/Undo cards + atomic monthlyBalances + weekly attendance + cross-servant diff
+    │   └── chatService.ts            # Group chat & DMs pagination, send text/image/audio/system, live report update, soft delete
+    ├── hooks/
+    │   ├── useAuth.ts
+    │   ├── useKamGroupData.ts        # onSnapshot subscriptions + online heartbeat
+    │   ├── useChatRoom.ts
+    │   └── useTheme.ts               # DARK / LIGHT + RTL + uiScaleFactor
+    ├── components/
+    │   ├── layout/                   # TopBar, NavBar (Mobile Bottom / Desktop Rail), PullToRefresh / SyncButton
+    │   ├── students/                 # StudentRow, AttendanceLamp, CardQuickChips, ChildProfileModal, BulkImportModal, AvatarGallery
+    │   ├── chat/                     # AttendanceV3Card, VisitationV1Card, DiffReportCard, ChildNotificationCard, MediaComposer
+    │   └── calendar/                 # CalendarTreeModal (Years -> Months + Coptic -> Saturday Weeks)
+    └── pages/
+        ├── SignInPage.tsx
+        ├── GroupOnboardingPage.tsx
+        ├── HomePage.tsx
+        ├── SmartAttendancePage.tsx
+        ├── VisitationSwipePage.tsx
+        ├── ReportsLeaderboardPage.tsx
+        ├── MessagesPage.tsx
+        ├── GroupManagePage.tsx
+        └── SettingsPage.tsx
+
+
+====================================================================
+ثالثاً: قواعد الحماية
+====================================================================
+
+قواعد الحماية: ممنوع تعدل أو تمسح أي collection أو حقل موجود في قاعدة البيانات، وممنوع تغير الـ Security Rules الحالية أو تنشرها. لو محتاج تضيف حاجة جديدة، ضيف حقول أو collections جديدة بس من غير ما تلمس القديم. لو محتاج تعديل في القواعد، اكتبهولي الأول في الشات وأنا أوافق قبل التطبيق، وخلي التعديل يحافظ على شغل تطبيق الموبايل زي ما هو.

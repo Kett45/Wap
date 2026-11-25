@@ -1,0 +1,8 @@
+{
+  "name": "نجم الكارت — kAM",
+  "description": "تطبيق إدارة فصول مدارس الأحد ومتابعة الحضور وكروت النقاط والافتقاد والمحادثات بين الخدام",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
