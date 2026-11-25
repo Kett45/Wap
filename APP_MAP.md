@@ -22,5 +22,5 @@
 
 ## البيلد والنشر (Build & Deploy)
 - `vite.config.ts`: ضبط `base: '/Wap/'` و`build.outDir: 'docs'` مع `emptyOutDir: true`، وإنشاء `docs/404.html` و`docs/.nojekyll` تلقائيًا بعد البيلد.
-- `docs/`: نسخة مبنية وجاهزة (`index.html`, `404.html`, `.nojekyll`, `assets/`) للنشر عبر GitHub Pages (`Deploy from a branch: main /docs`).
+- `.github/workflows/build-docs.yml`: يبني فولدر `docs/` ويرفعه مباشرةً إلى فرع `main` (وفرع `gh-pages`) لأن زر التصدير في AI Studio لا يرفع مجلدات البيلد تلقائيًا، مما يشغل `pages build and deployment` من `main /docs` بعلامة خضراء.
 - `README.md`: وصف المشروع ورابط التطبيق المباشر `https://kett45.github.io/Wap/`.
