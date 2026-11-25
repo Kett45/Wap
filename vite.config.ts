@@ -5,17 +5,14 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
-  const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1];
-  const base =
-    process.env.VITE_BASE_PATH ||
-    (process.env.GITHUB_ACTIONS === 'true' && repoName ? `/${repoName}/` : './');
+  const base = process.env.VITE_BASE_PATH || './';
 
   return {
     base,
     plugins: [
       react(),
       tailwindcss(),
-      // Copies src/assets into dist/ and creates 404.html for GitHub Pages SPA fallback.
+      // Copies src/assets into dist/ and creates 404.html + .nojekyll for GitHub Pages SPA support.
       {
         name: 'copy-unbundled-src-assets',
         apply: 'build',
@@ -31,8 +28,12 @@ export default defineConfig(() => {
           }
           const indexHtml = path.resolve(distDir, 'index.html');
           const notFoundHtml = path.resolve(distDir, '404.html');
+          const noJekyll = path.resolve(distDir, '.nojekyll');
           if (fs.existsSync(indexHtml)) {
             fs.copyFileSync(indexHtml, notFoundHtml);
+          }
+          if (fs.existsSync(distDir)) {
+            fs.writeFileSync(noJekyll, '');
           }
         },
       },

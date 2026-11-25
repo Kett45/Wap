@@ -21,6 +21,6 @@
 - `src/hooks/useTheme.ts`: التحكم في الثيمات، حجم الواجهة، ونوع وسمك الخط العربي.
 
 ## البيلد والنشر (Build & Deploy)
-- `vite.config.ts`: ضبط `base` تلقائيًا لـ GitHub Pages (`/<repo-name>/`) مع نسخ `index.html` إلى `404.html`.
-- `.github/workflows/deploy.yml`: بناء ونشر تلقائي على GitHub Pages باستخدام Bun/Node وتحديث رابط ووصف المشروع تلقائيًا.
+- `vite.config.ts`: ضبط `base: './'` النسبي العالمي مع إنشاء `404.html` و`.nojekyll` تلقائيًا بعد البيلد لمنع خطأ 404.
+- `.github/workflows/deploy.yml`: بناء التطبيق ونشره تلقائيًا على فرع `gh-pages` وتفعيل GitHub Pages عبر الـ API وكتابة الرابط الفعلي في وصف الريبو و`README.md`.
 - `README.md`: وصف المشروع تحت الريبو وروابط التشغيل المباشرة.
