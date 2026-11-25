@@ -22,4 +22,4 @@
 
 ## البيلد والنشر (Build & Deploy)
 - `vite.config.ts`: ضبط `base` تلقائيًا لـ GitHub Pages (`/<repo-name>/`) مع نسخ `index.html` إلى `404.html`.
-- `.github/workflows/deploy.yml`: بناء ونشر تلقائي على GitHub Pages عبر GitHub Actions.
+- `.github/workflows/deploy.yml`: بناء ونشر تلقائي على GitHub Pages عبر GitHub Actions (مع `enablement: true` وربط `VITE_FIREBASE_*` ومنع فشل `cache: npm`).
