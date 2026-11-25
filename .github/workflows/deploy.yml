@@ -24,13 +24,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: bun install || npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Build SPA (auto base path + 404.html)
         run: npm run build
@@ -45,6 +48,8 @@ jobs:
           VITE_FIRESTORE_DATABASE_ID: ${{ vars.VITE_FIRESTORE_DATABASE_ID }}
 
       - name: Configure GitHub Pages
+        id: pages_config
+        continue-on-error: true
         uses: actions/configure-pages@v5
         with:
           enablement: true
@@ -57,3 +62,14 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Set Live App URL in Repository Description & Website
+        if: always() && steps.deployment.outputs.page_url != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          gh api --method PATCH "repos/${{ github.repository }}" \
+            -f homepage="$PAGE_URL" \
+            -f description="نجم الكارت (kAM) — تطبيق إدارة فصول مدارس الأحد: $PAGE_URL" || true
