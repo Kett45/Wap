@@ -3,19 +3,42 @@ import {
   AlertCircle,
   Award,
   Calendar,
+  Check,
+  Copy,
+  ExternalLink,
+  KeyRound,
   MessageSquare,
+  Play,
   ShieldCheck,
   Smartphone,
   Users,
 } from 'lucide-react';
 import { useKam } from '../context/KamContext';
-import { isRunningInIframe } from '../services/authService';
+import {
+  getCurrentHostname,
+  getFirebaseAuthDomainsConsoleUrl,
+  isRunningInIframe,
+  startDirectGoogleOAuthRedirect,
+} from '../services/authService';
 
 export const SignInPage: React.FC = () => {
-  const { signInGoogle, signInGoogleRedirect, authError, clearAuthError } = useKam();
-  const [signingInMode, setSigningInMode] = useState<'NONE' | 'POPUP' | 'REDIRECT'>('NONE');
+  const {
+    signInGoogle,
+    signInGoogleRedirect,
+    signInGoogleToken,
+    enterPreviewMode,
+    authError,
+    clearAuthError,
+    showToast,
+  } = useKam();
+  const [signingInMode, setSigningInMode] = useState<'NONE' | 'POPUP' | 'REDIRECT' | 'TOKEN'>('NONE');
+  const [copiedDomain, setCopiedDomain] = useState(false);
+  const [showTokenBox, setShowTokenBox] = useState(false);
+  const [tokenInput, setTokenInput] = useState('');
 
   const inIframe = useMemo(() => isRunningInIframe(), []);
+  const currentHost = useMemo(() => getCurrentHostname(), []);
+  const firebaseConsoleUrl = useMemo(() => getFirebaseAuthDomainsConsoleUrl(), []);
 
   const handlePopupLogin = async () => {
     setSigningInMode('POPUP');
@@ -35,12 +58,34 @@ export const SignInPage: React.FC = () => {
     }
   };
 
+  const handleCopyDomain = async () => {
+    try {
+      await navigator.clipboard.writeText(currentHost);
+      setCopiedDomain(true);
+      showToast(`تم نسخ النطاق: ${currentHost}`, 'success');
+      window.setTimeout(() => setCopiedDomain(false), 3000);
+    } catch {
+      showToast(currentHost, 'info');
+    }
+  };
+
+  const handleTokenLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tokenInput.trim()) return;
+    setSigningInMode('TOKEN');
+    try {
+      await signInGoogleToken(tokenInput);
+    } finally {
+      setSigningInMode('NONE');
+    }
+  };
+
   return (
     <div className="min-h-dvh bg-[var(--kam-bg)] text-[var(--kam-text-primary)] flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 rounded-3xl border border-[var(--kam-border)] bg-[var(--kam-surface)] overflow-hidden shadow-xl">
         {/* Primary Sign-In Card (First on mobile for instant above-the-fold thumb access) */}
         <div className="lg:col-span-6 lg:order-2 p-6 sm:p-10 flex flex-col justify-center">
-          <div className="max-w-md mx-auto w-full space-y-6">
+          <div className="max-w-md mx-auto w-full space-y-5">
             {/* Compact Mobile Brand Header */}
             <div className="flex items-center gap-3.5 lg:hidden">
               <div className="w-12 h-12 rounded-2xl bg-[var(--kam-primary)] text-white flex items-center justify-center font-num font-extrabold text-lg shrink-0 shadow-sm">
@@ -61,14 +106,14 @@ export const SignInPage: React.FC = () => {
               </p>
             </div>
 
-            {/* Clean User-Facing Error Alert (no technical codes or project IDs) */}
+            {/* Error Alert + Multi-Method Instant Solutions when domain is not yet allowlisted */}
             {authError && (
               <div
                 role="alert"
-                className="rounded-2xl border border-[var(--kam-danger)]/40 bg-[var(--kam-danger)]/10 p-3.5 text-xs"
+                className="rounded-2xl border border-[var(--kam-danger)]/40 bg-[var(--kam-danger)]/10 p-4 text-xs space-y-3"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2 text-[var(--kam-text-primary)] leading-relaxed">
+                  <div className="flex items-start gap-2 text-[var(--kam-text-primary)] leading-relaxed font-semibold">
                     <AlertCircle className="w-4 h-4 text-[var(--kam-danger)] shrink-0 mt-0.5" />
                     <span>{authError.messageAr}</span>
                   </div>
@@ -80,11 +125,67 @@ export const SignInPage: React.FC = () => {
                     إغلاق
                   </button>
                 </div>
+
+                {authError.isUnauthorizedDomain && (
+                  <div className="pt-2.5 border-t border-[var(--kam-danger)]/25 space-y-2.5">
+                    <p className="text-[0.75rem] text-[var(--kam-text-secondary)] leading-relaxed">
+                      لتشغيل زر Google الأساسي على هذا الرابط، انسخ النطاق وأضفه في{' '}
+                      <strong className="text-[var(--kam-text-primary)]">Authorized domains</strong>، أو استخدم إحدى الطرق البديلة بالأسفل للدخول فوراً:
+                    </p>
+
+                    {/* Method 1: Copy exact domain + direct link to Firebase Auth Settings */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyDomain}
+                        className="min-h-[40px] flex-1 px-3 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-[var(--kam-text-primary)] font-num font-bold text-xs flex items-center justify-center gap-2 hover:border-[var(--kam-primary)] transition-colors"
+                      >
+                        {copiedDomain ? (
+                          <Check className="w-4 h-4 text-[var(--kam-success)] shrink-0" />
+                        ) : (
+                          <Copy className="w-4 h-4 text-[var(--kam-primary)] shrink-0" />
+                        )}
+                        <span dir="ltr">{currentHost}</span>
+                      </button>
+
+                      <a
+                        href={firebaseConsoleUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[40px] px-3 py-2 rounded-xl bg-[var(--kam-primary)] text-white font-bold text-xs flex items-center justify-center gap-1.5 hover:opacity-95 transition-opacity"
+                      >
+                        <span>فتح إعدادات Firebase</span>
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                      </a>
+                    </div>
+
+                    {/* Method 2: Open already-authorized Cloud Run instance */}
+                    <a
+                      href="https://kam-studio-1-863394288351.europe-west2.run.app"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-success)]/50 text-[var(--kam-success)] font-bold text-xs flex items-center justify-center gap-2 hover:bg-[var(--kam-success)]/10 transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4 shrink-0" />
+                      <span>فتح التطبيق على النطاق المفعّل الجاهز (شغال فوراً بـ Google)</span>
+                    </a>
+
+                    {/* Method 3: Interactive Full App Preview Mode */}
+                    <button
+                      type="button"
+                      onClick={enterPreviewMode}
+                      className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-tertiary)]/15 border border-[var(--kam-tertiary)]/40 text-[var(--kam-tertiary)] font-bold text-xs flex items-center justify-center gap-2 hover:bg-[var(--kam-tertiary)]/25 transition-colors"
+                    >
+                      <Play className="w-4 h-4 shrink-0" />
+                      <span>تشغيل التطبيق بالكامل الآن (وضع المعاينة التفاعلي)</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Primary & Mobile Redirect Buttons */}
-            <div className="space-y-3">
+            {/* Primary & Alternative Login Methods */}
+            <div className="space-y-2.5">
               <button
                 type="button"
                 onClick={handlePopupLogin}
@@ -133,9 +234,65 @@ export const SignInPage: React.FC = () => {
                   </span>
                 </button>
               )}
+
+              {/* Direct Token / Credential Login & Instant Preview Bar */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={enterPreviewMode}
+                  className="min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface-variant)]/70 hover:border-[var(--kam-tertiary)] border border-[var(--kam-border)] text-[var(--kam-text-secondary)] hover:text-[var(--kam-text-primary)] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Play className="w-3.5 h-3.5 text-[var(--kam-tertiary)] shrink-0" />
+                  <span>تجربة التطبيق فوراً</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTokenBox((v) => !v)}
+                  className="min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface-variant)]/70 hover:border-[var(--kam-primary)] border border-[var(--kam-border)] text-[var(--kam-text-secondary)] hover:text-[var(--kam-text-primary)] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-[var(--kam-gold)] shrink-0" />
+                  <span>دخول برمز Google</span>
+                </button>
+              </div>
+
+              {showTokenBox && (
+                <form
+                  onSubmit={handleTokenLogin}
+                  className="p-3.5 rounded-2xl bg-[var(--kam-surface-variant)] border border-[var(--kam-border)] space-y-2.5 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-[var(--kam-text-primary)]">
+                      دخول مباشر بـ Google Credential (بدون قيد الدومين)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={startDirectGoogleOAuthRedirect}
+                      className="text-[0.7rem] font-semibold text-[var(--kam-primary)] hover:underline"
+                    >
+                      جلب الرمز من Google
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="الصق Google ID Token أو Access Token هنا..."
+                    className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-xs font-num"
+                  />
+                  <button
+                    type="submit"
+                    disabled={signingInMode !== 'NONE' || !tokenInput.trim()}
+                    className="w-full min-h-[40px] py-2 rounded-xl bg-[var(--kam-primary)] text-white font-bold text-xs disabled:opacity-50"
+                  >
+                    {signingInMode === 'TOKEN' ? 'جاري التحقق والدخول...' : 'تسجيل الدخول بالرمز'}
+                  </button>
+                </form>
+              )}
             </div>
 
-            <div className="flex items-start gap-2.5 pt-4 border-t border-[var(--kam-border)] text-xs text-[var(--kam-text-muted)] leading-relaxed">
+            <div className="flex items-start gap-2.5 pt-3 border-t border-[var(--kam-border)] text-xs text-[var(--kam-text-muted)] leading-relaxed">
               <ShieldCheck className="w-4 h-4 text-[var(--kam-success)] shrink-0 mt-0.5" />
               <span>
                 بيانات الفصل والأطفال والخدام محمية ومخصصة لأعضاء فصلك فقط.

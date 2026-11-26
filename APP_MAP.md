@@ -4,7 +4,7 @@
 
 ## الشاشات والملفات الأساسية
 - `src/App.tsx` (1–270): الهيكل الرئيسي، الشريط العلوي للموبايل، القائمة الجانبية، وشريط التنقل السفلي.
-- `src/pages/SignInPage.tsx` (1–135): شاشة تسجيل الدخول بحساب Google (Popup + Redirect للموبايل).
+- `src/pages/SignInPage.tsx` (1–285): شاشة تسجيل الدخول بحساب Google مع حلول متعددة فورية (Popup + Redirect + دخول بـ Google Token `signInWithCredential` + نسخ الدومين ورابط Firebase Console المباشر + الرابط المفعّل الجاهز + وضع التجربة الفورية).
 - `src/pages/GroupOnboardingPage.tsx` (1–157): شاشة الانضمام لفصل بكود دعوة يومي أو إنشاء فصل جديد.
 - `src/pages/HomePage.tsx` (1–475): الشاشة الرئيسية، البلوكات، كروت الأطفال، ومنح النقاط.
 - `src/pages/SmartAttendancePage.tsx` (1–390): التحضير الذكي بالسحب (`SwipeableCard`) ومقارنة التحضير.
@@ -17,7 +17,7 @@
 ## الحالة والخدمات وقاعدة البيانات
 - `src/context/KamContext.tsx`: إدارة الحالة الشاملة ومزامنة Firestore اللحظية.
 - `src/lib/firebase.ts` & `firebase-applet-config.json`: إعدادات الاتصال بـ Firebase (`gen-lang-client-0007824663`) مع تفعيل `experimentalForceLongPolling` لضمان استقرار اتصال Firestore على الموبايل والـ iframe.
-- `src/services/authService.ts`, `groupService.ts`, `studentService.ts`, `chatService.ts`: خدمات Firebase.
+- `src/services/authService.ts`, `groupService.ts`, `studentService.ts`, `chatService.ts`: خدمات Firebase ودعم `signInWithCredential`.
 - `src/hooks/useTheme.ts`: التحكم في الثيمات، حجم الواجهة، ونوع وسمك الخط العربي.
 
 ## البيلد والنشر (Build & Deploy)

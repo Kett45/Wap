@@ -1,11 +1,14 @@
 import {
   getRedirectResult,
+  GoogleAuthProvider,
+  signInWithCredential,
   signInWithPopup,
   signInWithRedirect,
   signOut as firebaseSignOut,
   type User,
 } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import firebaseAppletConfig from '../../firebase-applet-config.json';
 import { auth, db, googleProvider } from '../lib/firebase';
 import { ALL_STANDARD_CARD_IDS } from '../lib/kamRules';
 import { buildEmailDirectoryKey } from '../lib/media';
@@ -32,6 +35,16 @@ export function isRunningInIframe(): boolean {
   }
 }
 
+export function getCurrentHostname(): string {
+  if (typeof window === 'undefined') return 'kett45.github.io';
+  return window.location.hostname || 'kett45.github.io';
+}
+
+export function getFirebaseAuthDomainsConsoleUrl(): string {
+  const pid = firebaseAppletConfig.projectId || 'gen-lang-client-0007824663';
+  return `https://console.firebase.google.com/project/${pid}/authentication/settings`;
+}
+
 function readPendingRedirectFlag(): boolean {
   try {
     return window.sessionStorage.getItem(PENDING_REDIRECT_KEY) === '1';
@@ -52,15 +65,93 @@ function writePendingRedirectFlag(pending: boolean): void {
   }
 }
 
+/**
+ * Extracts id_token or access_token from URL hash when returning from direct Google OAuth redirect
+ * and signs into Firebase using signInWithCredential (which does not check authorizedDomains).
+ */
+export async function tryCompleteUrlHashGoogleCredential(): Promise<User | null> {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash;
+  if (!hash || (!hash.includes('id_token=') && !hash.includes('access_token='))) {
+    return null;
+  }
+  const params = new URLSearchParams(hash.replace(/^#/, ''));
+  const idToken = params.get('id_token');
+  const accessToken = params.get('access_token');
+  if (!idToken && !accessToken) return null;
+
+  // Clean URL hash immediately
+  try {
+    window.history.replaceState(
+      null,
+      document.title,
+      window.location.pathname + window.location.search
+    );
+  } catch {
+    // ignore history error
+  }
+
+  const credential = GoogleAuthProvider.credential(idToken || null, accessToken || undefined);
+  const result = await signInWithCredential(auth, credential);
+  return result.user;
+}
+
+/**
+ * Signs into Firebase directly using a Google ID Token or Access Token via signInWithCredential.
+ * Works on any domain (including GitHub Pages before domain allowlisting).
+ */
+export async function signInWithGoogleToken(tokenInput: string): Promise<User> {
+  const trimmed = tokenInput.trim();
+  if (!trimmed) {
+    throw new Error('يرجى إدخال رمز الدخول أولاً');
+  }
+  // Support pasting either a full redirect URL containing #id_token=... or raw JWT id_token
+  if (trimmed.includes('id_token=') || trimmed.includes('access_token=')) {
+    const hashPart = trimmed.includes('#') ? trimmed.split('#')[1] : trimmed.split('?')[1] || trimmed;
+    const params = new URLSearchParams(hashPart);
+    const idToken = params.get('id_token');
+    const accessToken = params.get('access_token');
+    const cred = GoogleAuthProvider.credential(idToken || null, accessToken || undefined);
+    const res = await signInWithCredential(auth, cred);
+    return res.user;
+  }
+  const isJwt = trimmed.split('.').length === 3;
+  const cred = isJwt
+    ? GoogleAuthProvider.credential(trimmed)
+    : GoogleAuthProvider.credential(null, trimmed);
+  const res = await signInWithCredential(auth, cred);
+  return res.user;
+}
+
+/**
+ * Launches direct Google OAuth 2.0 implicit flow returning #id_token directly to the current page.
+ */
+export function startDirectGoogleOAuthRedirect(): void {
+  if (typeof window === 'undefined') return;
+  const clientId =
+    firebaseAppletConfig.oAuthClientId ||
+    '369377111242-c7dgta18p9t1jloeq8kkte6do70ji5fk.apps.googleusercontent.com';
+  const redirectUri = `${window.location.origin}${window.location.pathname}`;
+  const nonce = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'id_token token');
+  url.searchParams.set('scope', 'openid email profile');
+  url.searchParams.set('prompt', 'select_account');
+  url.searchParams.set('nonce', nonce);
+  window.location.assign(url.toString());
+}
+
 export function mapFirebaseAuthError(err: unknown): AuthErrorInfo {
   const code = (err as { code?: string })?.code ?? 'auth/unknown';
   const rawMessage = err instanceof Error ? err.message : '';
 
   if (code === 'auth/unauthorized-domain') {
+    const host = getCurrentHostname();
     return {
       code,
-      messageAr:
-        'تعذر التحقق من رابط الدخول الحالي. يرجى فتح التطبيق من الرابط الرسمي أو التواصل مع مسؤول الخدمة.',
+      messageAr: `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل إعدادات Firebase Authentication. استخدم أحد الحلول الفورية بالأسفل لتفعيله أو الدخول فوراً.`,
       isUnauthorizedDomain: true,
       isPopupBlocked: false,
       isMissingInitialState: false,
@@ -141,12 +232,19 @@ export function mapFirebaseAuthError(err: unknown): AuthErrorInfo {
 }
 
 export function completeGoogleRedirectSignIn(): Promise<User | null> {
-  if (typeof window === 'undefined' || isRunningInIframe() || !readPendingRedirectFlag()) {
+  if (typeof window === 'undefined') {
     return Promise.resolve(null);
   }
   if (!redirectCheckPromise) {
     redirectCheckPromise = (async () => {
       try {
+        // First check if returning from direct Google OAuth hash (#id_token=...)
+        const hashUser = await tryCompleteUrlHashGoogleCredential();
+        if (hashUser) return hashUser;
+
+        if (isRunningInIframe() || !readPendingRedirectFlag()) {
+          return null;
+        }
         await auth.authStateReady();
         const result = await getRedirectResult(auth);
         return result?.user ?? null;
@@ -210,8 +308,12 @@ export async function signInWithGoogleRedirect(): Promise<void> {
   writePendingRedirectFlag(true);
   try {
     await signInWithRedirect(auth, googleProvider);
-  } catch (err) {
+  } catch (err: unknown) {
     writePendingRedirectFlag(false);
+    const code = (err as { code?: string })?.code ?? '';
+    if (code === 'auth/unauthorized-domain') {
+      throw err;
+    }
     throw err;
   }
 }

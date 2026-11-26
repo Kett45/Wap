@@ -116,6 +116,8 @@ export interface KamContextValue {
   // Auth actions
   signInGoogle: () => Promise<void>;
   signInGoogleRedirect: () => Promise<void>;
+  signInGoogleToken: (token: string) => Promise<void>;
+  enterPreviewMode: () => void;
   signOut: () => Promise<void>;
   updateProfile: (patch: Parameters<typeof authSvc.updateUserProfileFields>[1]) => Promise<void>;
 
@@ -232,7 +234,7 @@ export interface KamContextValue {
 const KamContext = createContext<KamContextValue | null>(null);
 
 export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const previewMode = useMemo(() => isPreviewAutostartEnabled(), []);
+  const [previewMode, setPreviewMode] = useState<boolean>(() => isPreviewAutostartEnabled());
   const previewInit = useMemo(() => (previewMode ? createLocalPreviewDataset() : null), [previewMode]);
 
   const [authLoading, setAuthLoading] = useState(!previewMode);
@@ -644,9 +646,48 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [handleAuthActionError]);
 
+  const signInGoogleToken = useCallback(
+    async (token: string) => {
+      setAuthError(null);
+      try {
+        await authSvc.signInWithGoogleToken(token);
+      } catch (err: unknown) {
+        handleAuthActionError(err);
+      }
+    },
+    [handleAuthActionError]
+  );
+
+  const enterPreviewMode = useCallback(() => {
+    const dataset = createLocalPreviewDataset();
+    setAuthError(null);
+    setPreviewMode(true);
+    setAuthLoading(false);
+    setUserProfile(dataset.userProfile);
+    setGroup(dataset.group);
+    setJoinedGroups(dataset.joinedGroups);
+    setBlocks(dataset.blocks);
+    setStudents(dataset.students);
+    setCardEvents(dataset.cardEvents);
+    setMonthlyBalances(dataset.monthlyBalances);
+    setAttendance(dataset.attendance);
+    setChildNotes(dataset.childNotes);
+    setMembers(dataset.members);
+    setInvitations(dataset.invitations);
+    setChatMeta(dataset.chatMeta);
+    setGroupMessages(dataset.groupMessages);
+    setDmRooms(dataset.dmRooms);
+    setPreviewDmMsgs(dataset.dmMessagesByRoom);
+    showToast('تم فتح التطبيق في الوضع التجريبي التفاعلي الكامل', 'success');
+  }, [showToast]);
+
   const signOut = useCallback(async () => {
     if (previewMode) {
-      showToast('تم تسجيل الخروج (وضع المعاينة)', 'info');
+      setPreviewMode(false);
+      setUserProfile(null);
+      setGroup(null);
+      setJoinedGroups([]);
+      showToast('تم الخروج من الوضع التجريبي', 'info');
       return;
     }
     await authSvc.signOutUser();
@@ -1803,6 +1844,8 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ensureStudentAvatarLoaded,
     signInGoogle,
     signInGoogleRedirect,
+    signInGoogleToken,
+    enterPreviewMode,
     signOut,
     updateProfile,
     createGroup,
