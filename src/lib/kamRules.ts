@@ -20,6 +20,8 @@ export const BLOCK_COLOR_PRESETS = [
   { hex: '#F97316', nameAr: 'برتقالي' },
 ] as const;
 
+export const BLOCK_COLOR_PALETTE: string[] = BLOCK_COLOR_PRESETS.map((p) => p.hex);
+
 export const COLOR_KEY_PALETTE: Record<
   CustomCardColorKey,
   { darkHex: string; lightHex: string; labelAr: string }

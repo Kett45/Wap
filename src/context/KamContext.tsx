@@ -109,7 +109,14 @@ export interface KamContextValue {
   showToast: (message: string, tone?: ToastItem['tone']) => void;
   dismissToast: (id: string) => void;
 
-  // Sync & Avatars
+  // Sync & Avatars & UI state
+  isOnline: boolean;
+  hasPendingWrites: boolean;
+  syncStatus: 'ONLINE' | 'OFFLINE' | 'SYNCING';
+  isInsideActiveChatRoom: boolean;
+  setIsInsideActiveChatRoom: (val: boolean) => void;
+  quickPeekStudent: Student | null;
+  setQuickPeekStudent: (st: Student | null) => void;
   refreshAllData: () => Promise<void>;
   ensureStudentAvatarLoaded: (studentId: string) => Promise<string>;
 
@@ -157,6 +164,7 @@ export interface KamContextValue {
     targetBlockId?: string;
   }) => Promise<void>;
   removeStudent: (studentId: string) => Promise<void>;
+  mergeDuplicateStudents: (primaryId: string, duplicateId: string) => Promise<void>;
   bulkImportStudents: (params: {
     rows: studentSvc.BulkImportParsedRow[];
     blockId: string;
@@ -273,6 +281,42 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [pendingSources, setPendingSources] = useState<Record<string, boolean>>({});
+  const [isInsideActiveChatRoom, setIsInsideActiveChatRoom] = useState<boolean>(false);
+  const [quickPeekStudent, setQuickPeekStudent] = useState<Student | null>(null);
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  const markPendingSource = useCallback((key: string, pending: boolean) => {
+    setPendingSources((prev) => {
+      if (Boolean(prev[key]) === pending) return prev;
+      return { ...prev, [key]: pending };
+    });
+  }, []);
+
+  const hasPendingWrites = useMemo(
+    () => Object.values(pendingSources).some(Boolean),
+    [pendingSources]
+  );
+
+  const syncStatus: 'ONLINE' | 'OFFLINE' | 'SYNCING' = useMemo(() => {
+    if (!isOnline) return 'OFFLINE';
+    if (hasPendingWrites) return 'SYNCING';
+    return 'ONLINE';
+  }, [isOnline, hasPendingWrites]);
+
   const showToast = useCallback((message: string, tone: ToastItem['tone'] = 'info') => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setToasts((prev) => {
@@ -359,11 +403,16 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setUserProfile(profile);
         await authSvc.syncEmailDirectory(user, profile.displayName);
 
-        unsubProfile = onSnapshot(doc(db, 'users', user.uid), (snap) => {
-          if (snap.exists()) {
-            setUserProfile(snap.data() as UserProfile);
+        unsubProfile = onSnapshot(
+          doc(db, 'users', user.uid),
+          { includeMetadataChanges: true },
+          (snap) => {
+            markPendingSource('userProfile', snap.metadata.hasPendingWrites);
+            if (snap.exists()) {
+              setUserProfile(snap.data() as UserProfile);
+            }
           }
-        });
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'تعذر تحميل ملف المستخدم';
         showToast(msg, 'error');
@@ -378,7 +427,7 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubAuth();
       if (unsubProfile) unsubProfile();
     };
-  }, [previewMode, showToast]);
+  }, [previewMode, showToast, markPendingSource]);
 
   // Fetch joined groups summary list
   useEffect(() => {
@@ -402,6 +451,27 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Real-time Firestore subscriptions for active group
   const activeGroupId = userProfile?.groupId || '';
 
+  // Persist local snapshot of classroom data for instant offline hydration
+  useEffect(() => {
+    if (!activeGroupId || !group) return;
+    try {
+      const snapshotPayload = {
+        group,
+        blocks,
+        students,
+        cardEvents: cardEvents.slice(0, 600),
+        monthlyBalances,
+        attendance: attendance.slice(0, 600),
+        childNotes: childNotes.slice(0, 300),
+        members,
+        savedAt: Date.now(),
+      };
+      localStorage.setItem(`kam_offline_snapshot_${activeGroupId}`, JSON.stringify(snapshotPayload));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [activeGroupId, group, blocks, students, cardEvents, monthlyBalances, attendance, childNotes, members]);
+
   useEffect(() => {
     if (previewMode) return;
     if (!firebaseUser || !activeGroupId) {
@@ -421,6 +491,24 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    // Hydrate immediately from localStorage cache if available while Firestore initializes
+    try {
+      const cachedRaw = localStorage.getItem(`kam_offline_snapshot_${activeGroupId}`);
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached?.group) setGroup(cached.group);
+        if (Array.isArray(cached?.blocks)) setBlocks(cached.blocks);
+        if (Array.isArray(cached?.students)) setStudents(cached.students);
+        if (Array.isArray(cached?.cardEvents)) setCardEvents(cached.cardEvents);
+        if (Array.isArray(cached?.monthlyBalances)) setMonthlyBalances(cached.monthlyBalances);
+        if (Array.isArray(cached?.attendance)) setAttendance(cached.attendance);
+        if (Array.isArray(cached?.childNotes)) setChildNotes(cached.childNotes);
+        if (Array.isArray(cached?.members)) setMembers(cached.members);
+      }
+    } catch {
+      // Ignore parse errors
+    }
+
     setDataLoading(true);
     setOlderGroupMessages([]);
 
@@ -429,7 +517,9 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     unsubs.push(
       onSnapshot(
         doc(db, 'groups', activeGroupId),
+        { includeMetadataChanges: true },
         (snap) => {
+          markPendingSource('group', snap.metadata.hasPendingWrites);
           if (snap.exists()) {
             setGroup({ id: snap.id, ...snap.data() } as Group);
           } else {
@@ -442,67 +532,116 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'blocks'), (snap) => {
-        const list = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }) as ServantBlock)
-          .sort((a, b) => a.sortOrder - b.sortOrder);
-        setBlocks(list);
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'blocks'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('blocks', snap.metadata.hasPendingWrites);
+          const list = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }) as ServantBlock)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          setBlocks(list);
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'students'), (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Student);
-        setStudents(list);
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'students'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('students', snap.metadata.hasPendingWrites);
+          const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Student);
+          setStudents(list);
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'cardEvents'), (snap) => {
-        const list = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }) as CardEvent)
-          .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
-        setCardEvents(list);
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'cardEvents'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('cardEvents', snap.metadata.hasPendingWrites);
+          const list = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }) as CardEvent)
+            .sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+          setCardEvents(list);
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'monthlyBalances'), (snap) => {
-        setMonthlyBalances(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MonthlyBalance));
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'monthlyBalances'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('monthlyBalances', snap.metadata.hasPendingWrites);
+          setMonthlyBalances(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as MonthlyBalance));
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'attendance'), (snap) => {
-        setAttendance(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AttendanceRecord));
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'attendance'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('attendance', snap.metadata.hasPendingWrites);
+          setAttendance(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as AttendanceRecord));
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'childNotes'), (snap) => {
-        const list = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }) as ChildNote)
-          .sort((a, b) => (b.clientCreatedAtMillis ?? toMillis(b.createdAt)) - (a.clientCreatedAtMillis ?? toMillis(a.createdAt)));
-        setChildNotes(list);
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'childNotes'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('childNotes', snap.metadata.hasPendingWrites);
+          const list = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }) as ChildNote)
+            .sort(
+              (a, b) =>
+                (b.clientCreatedAtMillis ?? toMillis(b.createdAt)) -
+                (a.clientCreatedAtMillis ?? toMillis(a.createdAt))
+            );
+          setChildNotes(list);
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'members'), (snap) => {
-        setMembers(snap.docs.map((d) => ({ uid: d.id, ...d.data() }) as GroupMemberProfile));
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'members'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('members', snap.metadata.hasPendingWrites);
+          setMembers(snap.docs.map((d) => ({ uid: d.id, ...d.data() }) as GroupMemberProfile));
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(collection(db, 'groups', activeGroupId, 'invitations'), (snap) => {
-        setInvitations(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as GroupInvitation));
-      })
+      onSnapshot(
+        collection(db, 'groups', activeGroupId, 'invitations'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('invitations', snap.metadata.hasPendingWrites);
+          setInvitations(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as GroupInvitation));
+        }
+      )
     );
 
     unsubs.push(
-      onSnapshot(doc(db, 'groups', activeGroupId, 'chatMeta', 'main'), (snap) => {
-        setChatMeta(snap.exists() ? (snap.data() as GroupChatMeta) : null);
-      })
+      onSnapshot(
+        doc(db, 'groups', activeGroupId, 'chatMeta', 'main'),
+        { includeMetadataChanges: true },
+        (snap) => {
+          markPendingSource('chatMeta', snap.metadata.hasPendingWrites);
+          setChatMeta(snap.exists() ? (snap.data() as GroupChatMeta) : null);
+        }
+      )
     );
 
     unsubs.push(
@@ -512,7 +651,9 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           orderBy('createdAt', 'desc'),
           limit(chatSvc.CHAT_PAGE_SIZE)
         ),
+        { includeMetadataChanges: true },
         (snap) => {
+          markPendingSource('messages', snap.metadata.hasPendingWrites);
           const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ChatMessage);
           setGroupMessages(list);
           setGroupMsgCursor(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : null);
@@ -524,7 +665,7 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [previewMode, firebaseUser?.uid, activeGroupId, refreshNonce]);
+  }, [previewMode, firebaseUser?.uid, activeGroupId, refreshNonce, markPendingSource]);
 
   // DM Rooms subscription (real Firebase mode)
   useEffect(() => {
@@ -1143,6 +1284,86 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('تم حذف الطفل', 'info');
     },
     [previewMode, group, showToast]
+  );
+
+  const mergeDuplicateStudents = useCallback(
+    async (primaryId: string, duplicateId: string) => {
+      if (!group || !userProfile) return;
+      const primary = students.find((s) => s.id === primaryId);
+      const duplicate = students.find((s) => s.id === duplicateId);
+      if (!primary || !duplicate) return;
+
+      if (previewMode) {
+        setCardEvents((prev) =>
+          prev.map((e) =>
+            e.studentId === duplicateId
+              ? { ...e, studentId: primaryId, studentName: primary.name }
+              : e
+          )
+        );
+        setChildNotes((prev) =>
+          prev.map((n) =>
+            n.studentId === duplicateId
+              ? { ...n, studentId: primaryId, studentName: primary.name }
+              : n
+          )
+        );
+        setAttendance((prev) => {
+          const rest = prev.filter((a) => a.studentId !== duplicateId);
+          const dupAtt = prev.filter((a) => a.studentId === duplicateId);
+          for (const att of dupAtt) {
+            const pId = buildAttendanceDocId(att.weekKey, primaryId);
+            if (!rest.some((r) => r.id === pId)) {
+              rest.push({ ...att, id: pId, studentId: primaryId, studentName: primary.name });
+            }
+          }
+          return rest;
+        });
+        setMonthlyBalances((prev) => {
+          const dupBals = prev.filter((b) => b.studentId === duplicateId);
+          let next = prev.filter((b) => b.studentId !== duplicateId);
+          for (const dbBal of dupBals) {
+            const pBalId = buildMonthlyBalanceDocId(dbBal.monthKey, primaryId);
+            const existing = next.find((b) => b.id === pBalId);
+            if (existing) {
+              next = next.map((b) =>
+                b.id === pBalId
+                  ? {
+                      ...b,
+                      totalPoints: b.totalPoints + dbBal.totalPoints,
+                      eventsCount: b.eventsCount + dbBal.eventsCount,
+                    }
+                  : b
+              );
+            } else {
+              next.push({
+                ...dbBal,
+                id: pBalId,
+                studentId: primaryId,
+                studentName: primary.name,
+              });
+            }
+          }
+          return next;
+        });
+        setStudents((prev) => prev.filter((s) => s.id !== duplicateId));
+        showToast(`تم دمج السجلين في "${primary.name}" بنجاح`, 'success');
+        return;
+      }
+
+      await studentSvc.mergeDuplicateStudentsInFirestore({
+        group,
+        primary,
+        duplicate,
+        cardEvents,
+        childNotes,
+        attendance,
+        monthlyBalances,
+        actorUid: userProfile.userId,
+      });
+      showToast(`تم دمج السجلين في "${primary.name}" بنجاح`, 'success');
+    },
+    [previewMode, group, userProfile, students, cardEvents, childNotes, attendance, monthlyBalances, showToast]
   );
 
   const bulkImportStudents = useCallback(
@@ -1840,6 +2061,13 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toasts,
     showToast,
     dismissToast,
+    isOnline,
+    hasPendingWrites,
+    syncStatus,
+    isInsideActiveChatRoom,
+    setIsInsideActiveChatRoom,
+    quickPeekStudent,
+    setQuickPeekStudent,
     refreshAllData,
     ensureStudentAvatarLoaded,
     signInGoogle,
@@ -1868,6 +2096,7 @@ export const KamProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     editStudent,
     reorderStudent,
     removeStudent,
+    mergeDuplicateStudents,
     bulkImportStudents,
     saveStudentAvatarList,
     createChildNote,

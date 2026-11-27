@@ -1,19 +1,24 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, Calendar, Filter, Trophy } from 'lucide-react';
+import { ArrowRight, Calendar, Search, Trophy, X } from 'lucide-react';
 import { useKam } from '../context/KamContext';
 import { AvatarBadge } from '../components/ui/AvatarBadge';
 import { CalendarTreeModal } from '../components/calendar/CalendarTreeModal';
+import { ChildProfileModal } from '../components/students/ChildProfileModal';
+import { normalizeArabicName } from '../lib/arabic';
 import { getQuickWeekKeys } from '../lib/calendar';
 import { getAllCardDefinitions } from '../lib/kamRules';
-import type { CardTypeId } from '../types/kam';
+import type { CardTypeId, Student } from '../types/kam';
 
 interface ReportsLeaderboardPageProps {
   onBack: () => void;
 }
 
+type SortFilterMode = 'HIGHEST' | 'WEAKEST' | 'ABSENT_ZERO' | 'ACTIVE_ONLY';
+
 export const ReportsLeaderboardPage: React.FC<ReportsLeaderboardPageProps> = ({ onBack }) => {
   const {
     group,
+    userProfile,
     blocks,
     students,
     cardEvents,
@@ -25,397 +30,456 @@ export const ReportsLeaderboardPage: React.FC<ReportsLeaderboardPageProps> = ({ 
   const [selectedWeeks, setSelectedWeeks] = useState<string[]>([selectedWeekKey]);
   const [calendarOpen, setCalendarOpen] = useState(false);
 
-  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
-  const [selectedCardTypes, setSelectedCardTypes] = useState<CardTypeId[]>([]);
-  const [attendanceOnly, setAttendanceOnly] = useState(false);
+  const [sortMode, setSortMode] = useState<SortFilterMode>('HIGHEST');
+  const [selectedBlockId, setSelectedBlockId] = useState<string>('ALL');
+  const [selectedCardType, setSelectedCardType] = useState<'ALL' | CardTypeId>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
 
   const allCards = useMemo(() => getAllCardDefinitions(group), [group]);
-
-  const toggleItem = <T extends string>(list: T[], val: T, setter: React.Dispatch<React.SetStateAction<T[]>>) => {
-    setter(list.includes(val) ? list.filter((x) => x !== val) : [...list, val]);
-  };
-
   const weekSet = useMemo(() => new Set(selectedWeeks), [selectedWeeks]);
+  const isLight = userProfile?.themeId === 'LIGHT';
 
-  // Filtered students list
-  const scopedStudents = useMemo(() => {
-    return students.filter((s) => {
-      if (selectedBlockIds.length > 0) {
-        const blkKey = s.blockId || '__unassigned__';
-        if (!selectedBlockIds.includes(blkKey)) return false;
-      }
-      if (selectedStudentIds.length > 0 && !selectedStudentIds.includes(s.id)) {
-        return false;
-      }
-      return true;
-    });
-  }, [students, selectedBlockIds, selectedStudentIds]);
-
-  const scopedStudentIds = useMemo(() => new Set(scopedStudents.map((s) => s.id)), [scopedStudents]);
-
-  // Leaderboard calculations
-  const rankedRows = useMemo(() => {
+  // Compute raw student stats across the selected period
+  const allRows = useMemo(() => {
     const eventsInPeriod = cardEvents.filter((e) => weekSet.has(e.weekKey));
     const attInPeriod = attendance.filter((a) => weekSet.has(a.weekKey));
 
-    return scopedStudents
-      .map((student) => {
-        const studentEvents = eventsInPeriod.filter((e) => {
-          if (e.studentId !== student.id) return false;
-          if (attendanceOnly) return e.cardType === 'ATTENDANCE';
-          if (selectedCardTypes.length > 0 && !selectedCardTypes.includes(e.cardType)) return false;
-          return true;
-        });
+    return students.map((student) => {
+      const studentEvents = eventsInPeriod.filter((e) => e.studentId === student.id);
+      const byCardPoints: Partial<Record<CardTypeId, number>> = {};
+      const byCardCounts: Partial<Record<CardTypeId, number>> = {};
+      let totalPoints = 0;
 
-        const byCard: Partial<Record<CardTypeId, number>> = {};
-        let totalPoints = 0;
-        for (const ev of studentEvents) {
-          totalPoints += ev.points;
-          byCard[ev.cardType] = (byCard[ev.cardType] ?? 0) + ev.points;
+      for (const ev of studentEvents) {
+        totalPoints += ev.points;
+        byCardPoints[ev.cardType] = (byCardPoints[ev.cardType] ?? 0) + ev.points;
+        byCardCounts[ev.cardType] = (byCardCounts[ev.cardType] ?? 0) + 1;
+      }
+
+      const studentAtt = attInPeriod.filter((a) => a.studentId === student.id);
+      const presentRecords = studentAtt.filter((a) => a.status === 'PRESENT').length;
+      const attCardCount = byCardCounts.ATTENDANCE ?? 0;
+      const presentCount = Math.max(presentRecords, attCardCount);
+
+      const displayPoints =
+        selectedCardType === 'ALL' ? totalPoints : byCardPoints[selectedCardType] ?? 0;
+
+      return {
+        student,
+        totalPoints,
+        displayPoints,
+        eventsCount: studentEvents.length,
+        byCardPoints,
+        byCardCounts,
+        presentCount,
+      };
+    });
+  }, [students, cardEvents, attendance, weekSet, selectedCardType]);
+
+  // 4 Top Summary Counts (Matching FullClassLeaderboardScreen.kt)
+  const summaryStats = useMemo(() => {
+    const total = allRows.length;
+    const active = allRows.filter((r) => r.totalPoints > 0).length;
+    const absentZero = allRows.filter((r) => r.presentCount === 0).length;
+    const weakZero = allRows.filter((r) => r.totalPoints === 0).length;
+    return { total, active, absentZero, weakZero };
+  }, [allRows]);
+
+  // Filtered & Sorted Leaderboard List
+  const filteredRows = useMemo(() => {
+    const normSearch = normalizeArabicName(searchQuery.trim().replace(/^#/, ''));
+
+    return allRows
+      .filter((row) => {
+        if (selectedBlockId === 'UNASSIGNED' && row.student.blockId) return false;
+        if (
+          selectedBlockId !== 'ALL' &&
+          selectedBlockId !== 'UNASSIGNED' &&
+          row.student.blockId !== selectedBlockId
+        ) {
+          return false;
         }
+        if (selectedCardType !== 'ALL' && (row.byCardPoints[selectedCardType] ?? 0) === 0) {
+          return false;
+        }
+        if (sortMode === 'ABSENT_ZERO' && row.presentCount > 0) return false;
+        if (sortMode === 'ACTIVE_ONLY' && row.totalPoints === 0) return false;
 
-        const studentAtt = attInPeriod.filter((a) => a.studentId === student.id);
-        const presentWeeks = studentAtt.filter((a) => a.status === 'PRESENT').length;
-        const absentWeeks = studentAtt.filter((a) => a.status === 'ABSENT').length;
-
-        return {
-          student,
-          totalPoints,
-          eventsCount: studentEvents.length,
-          byCard,
-          presentWeeks,
-          absentWeeks,
-        };
+        if (normSearch) {
+          const normName = normalizeArabicName(row.student.name);
+          const numStr = String(row.student.studentNumber);
+          if (!normName.includes(normSearch) && !numStr.includes(normSearch)) return false;
+        }
+        return true;
       })
       .sort((a, b) => {
-        if (attendanceOnly) {
-          if (b.presentWeeks !== a.presentWeeks) return b.presentWeeks - a.presentWeeks;
+        if (sortMode === 'WEAKEST' || sortMode === 'ABSENT_ZERO') {
+          if (a.displayPoints !== b.displayPoints) return a.displayPoints - b.displayPoints;
+          if (a.presentCount !== b.presentCount) return a.presentCount - b.presentCount;
+          return a.student.studentNumber - b.student.studentNumber;
         }
-        if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+        if (b.displayPoints !== a.displayPoints) return b.displayPoints - a.displayPoints;
+        if (b.presentCount !== a.presentCount) return b.presentCount - a.presentCount;
         return a.student.studentNumber - b.student.studentNumber;
       });
-  }, [scopedStudents, cardEvents, attendance, weekSet, attendanceOnly, selectedCardTypes]);
-
-  // Summary metrics (bottom strip)
-  const summary = useMemo(() => {
-    const attInPeriod = attendance.filter(
-      (a) => weekSet.has(a.weekKey) && scopedStudentIds.has(a.studentId)
-    );
-    const presentCount = attInPeriod.filter((a) => a.status === 'PRESENT').length;
-    const absentCount = attInPeriod.filter((a) => a.status === 'ABSENT').length;
-
-    const filteredPoints = rankedRows.reduce((acc, r) => acc + r.totalPoints, 0);
-
-    // Total app points in selected period WITHOUT sub-filter restrictions
-    const totalAppPointsInPeriod = cardEvents
-      .filter((e) => weekSet.has(e.weekKey))
-      .reduce((acc, e) => acc + e.points, 0);
-
-    return {
-      presentCount,
-      absentCount,
-      filteredPoints,
-      totalAppPointsInPeriod,
-    };
-  }, [attendance, weekSet, scopedStudentIds, rankedRows, cardEvents]);
+  }, [allRows, selectedBlockId, selectedCardType, sortMode, searchQuery]);
 
   return (
-    <div className="space-y-5 pb-16">
+    <div className="space-y-3 pb-12">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--kam-border)]">
-        <div className="flex items-center gap-2.5">
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--kam-border)]">
+        <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={onBack}
-            aria-label="العودة للرئيسية"
-            className="p-2 rounded-xl border border-[var(--kam-border)] bg-[var(--kam-surface)] hover:border-[var(--kam-primary)]"
+            aria-label="رجوع"
+            className="w-10 h-10 rounded-xl border border-[var(--kam-border)] bg-[var(--kam-surface)] flex items-center justify-center shrink-0"
           >
             <ArrowRight className="w-4 h-4" />
           </button>
-          <div>
-            <h1 className="text-lg font-extrabold flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-[var(--kam-gold)]" />
-              <span>التقارير ولوحة الصدارة</span>
+          <div className="min-w-0">
+            <h1 className="text-base font-extrabold flex items-center gap-1.5 truncate">
+              <Trophy className="w-4 h-4 text-[var(--kam-gold)] shrink-0" />
+              <span>ترتيب الفصل الكامل</span>
             </h1>
-            <p className="text-xs text-[var(--kam-text-muted)] font-num">
-              الفترة المحددة: {selectedWeeks.length === 1 ? selectedWeeks[0] : `${selectedWeeks.length} أسابيع`}
+            <p className="text-[11px] text-[var(--kam-text-muted)] font-num">
+              {selectedWeeks.length === 1
+                ? selectedWeeks[0]
+                : `${selectedWeeks.length} أسابيع محددة`}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setSelectedWeeks([quick.thisWeek.weekKey])}
-            className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-              selectedWeeks.length === 1 && selectedWeeks[0] === quick.thisWeek.weekKey
-                ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
-            }`}
-          >
-            هذا الأسبوع
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedWeeks([quick.lastWeek.weekKey])}
-            className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-              selectedWeeks.length === 1 && selectedWeeks[0] === quick.lastWeek.weekKey
-                ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
-            }`}
-          >
-            الأسبوع اللي فات
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedWeeks([quick.twoWeeksAgo.weekKey])}
-            className={`min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold border ${
-              selectedWeeks.length === 1 && selectedWeeks[0] === quick.twoWeeksAgo.weekKey
-                ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
-            }`}
-          >
-            الأسبوع اللي قبله
-          </button>
-          <button
-            type="button"
-            onClick={() => setCalendarOpen(true)}
-            className="min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[var(--kam-surface)] border border-[var(--kam-border)] hover:border-[var(--kam-primary)] flex items-center gap-1.5"
-          >
-            <Calendar className="w-3.5 h-3.5 text-[var(--kam-primary)]" />
-            <span>شجرة التقويم</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setCalendarOpen(true)}
+          className="h-9 px-3 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-primary)]/50 text-xs font-bold flex items-center gap-1.5 shrink-0"
+        >
+          <Calendar className="w-3.5 h-3.5 text-[var(--kam-primary)]" />
+          <span>شجرة التقويم</span>
+        </button>
       </div>
 
-      {/* Multi-Select Filter Panel */}
-      <div className="rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)] p-4 space-y-3.5">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-xs font-bold text-[var(--kam-text-secondary)]">
-            <Filter className="w-3.5 h-3.5" />
-            <span>تصفية متعددة</span>
-          </div>
-          <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-            <input
-              type="checkbox"
-              checked={attendanceOnly}
-              onChange={(e) => setAttendanceOnly(e.target.checked)}
-              className="accent-[var(--kam-primary)]"
-            />
-            <span>عرض الحضور لوحده</span>
-          </label>
-        </div>
+      {/* Quick Period Selector Chips */}
+      <div className="flex items-center gap-1.5 overflow-x-auto kam-scrollbar">
+        <button
+          type="button"
+          onClick={() => setSelectedWeeks([quick.thisWeek.weekKey])}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold border whitespace-nowrap ${
+            selectedWeeks.length === 1 && selectedWeeks[0] === quick.thisWeek.weekKey
+              ? 'bg-[var(--kam-primary)]/20 border-[var(--kam-primary)] text-[var(--kam-primary)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+          }`}
+        >
+          هذا الأسبوع
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedWeeks([quick.lastWeek.weekKey])}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold border whitespace-nowrap ${
+            selectedWeeks.length === 1 && selectedWeeks[0] === quick.lastWeek.weekKey
+              ? 'bg-[var(--kam-primary)]/20 border-[var(--kam-primary)] text-[var(--kam-primary)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+          }`}
+        >
+          الأسبوع السابق
+        </button>
+        <button
+          type="button"
+          onClick={() => setSelectedWeeks([quick.twoWeeksAgo.weekKey])}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold border whitespace-nowrap ${
+            selectedWeeks.length === 1 && selectedWeeks[0] === quick.twoWeeksAgo.weekKey
+              ? 'bg-[var(--kam-primary)]/20 border-[var(--kam-primary)] text-[var(--kam-primary)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+          }`}
+        >
+          قبل أسبوعين
+        </button>
+      </div>
 
-        {/* Blocks multi-select */}
-        <div className="space-y-1.5">
-          <div className="text-[0.72rem] font-semibold text-[var(--kam-text-muted)]">البلوكات:</div>
-          <div className="flex flex-wrap gap-1.5">
-            {blocks.map((b) => {
-              const active = selectedBlockIds.includes(b.id);
-              return (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => toggleItem(selectedBlockIds, b.id, setSelectedBlockIds)}
-                  className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
-                    active
-                      ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                      : 'bg-[var(--kam-surface-variant)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
-                  }`}
-                >
-                  {b.servantName}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => toggleItem(selectedBlockIds, '__unassigned__', setSelectedBlockIds)}
-              className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
-                selectedBlockIds.includes('__unassigned__')
-                  ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                  : 'bg-[var(--kam-surface-variant)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
-              }`}
-            >
-              بدون بلوك
-            </button>
+      {/* 4 Summary Filter Cards (كل الفصل / متفاعلين / غائبين / ضعفاء) */}
+      <div className="grid grid-cols-4 gap-1.5">
+        <button
+          type="button"
+          onClick={() => setSortMode('HIGHEST')}
+          className={`p-2 rounded-[14px] border text-center transition-colors ${
+            sortMode === 'HIGHEST'
+              ? 'bg-[var(--kam-primary)]/20 border-[var(--kam-primary)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
+          }`}
+        >
+          <div className="text-base font-num font-extrabold text-[var(--kam-primary)]">
+            {summaryStats.total}
           </div>
-        </div>
+          <div className="text-[10px] font-bold text-[var(--kam-text-secondary)]">كل الفصل</div>
+        </button>
 
-        {/* Card types multi-select */}
-        {!attendanceOnly && (
-          <div className="space-y-1.5">
-            <div className="text-[0.72rem] font-semibold text-[var(--kam-text-muted)]">أنواع الكروت:</div>
-            <div className="flex flex-wrap gap-1.5">
-              {allCards.map((c) => {
-                const active = selectedCardTypes.includes(c.id);
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => toggleItem(selectedCardTypes, c.id, setSelectedCardTypes)}
-                    className={`min-h-[36px] px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
-                      active
-                        ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                        : 'bg-[var(--kam-surface-variant)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
-                    }`}
-                  >
-                    {c.icon} {c.titleAr}
-                  </button>
-                );
-              })}
-            </div>
+        <button
+          type="button"
+          onClick={() => setSortMode('ACTIVE_ONLY')}
+          className={`p-2 rounded-[14px] border text-center transition-colors ${
+            sortMode === 'ACTIVE_ONLY'
+              ? 'bg-[#2CB578]/20 border-[#2CB578]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
+          }`}
+        >
+          <div className="text-base font-num font-extrabold text-[#2CB578]">
+            {summaryStats.active}
           </div>
+          <div className="text-[10px] font-bold text-[var(--kam-text-secondary)]">متفاعلين</div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSortMode('ABSENT_ZERO')}
+          className={`p-2 rounded-[14px] border text-center transition-colors ${
+            sortMode === 'ABSENT_ZERO'
+              ? 'bg-[#EF5350]/20 border-[#EF5350]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
+          }`}
+        >
+          <div className="text-base font-num font-extrabold text-[#EF5350]">
+            {summaryStats.absentZero}
+          </div>
+          <div className="text-[10px] font-bold text-[var(--kam-text-secondary)]">
+            غائبين (0)
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSortMode('WEAKEST')}
+          className={`p-2 rounded-[14px] border text-center transition-colors ${
+            sortMode === 'WEAKEST'
+              ? 'bg-[#E5A436]/20 border-[#E5A436]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)]'
+          }`}
+        >
+          <div className="text-base font-num font-extrabold text-[#E5A436]">
+            {summaryStats.weakZero}
+          </div>
+          <div className="text-[10px] font-bold text-[var(--kam-text-secondary)]">
+            ضعفاء (0 ن)
+          </div>
+        </button>
+      </div>
+
+      {/* Search Bar inside Leaderboard */}
+      <div className="relative">
+        <Search className="w-4 h-4 text-[var(--kam-text-muted)] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="ابحث باسم الطفل أو رقمه داخل الترتيب..."
+          className="w-full h-10 pr-10 pl-8 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-xs"
+        />
+        {searchQuery && (
+          <button
+            type="button"
+            onClick={() => setSearchQuery('')}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--kam-text-muted)]"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         )}
-
-        {/* Students multi-select */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[0.72rem] font-semibold text-[var(--kam-text-muted)]">
-              أطفال محددون ({selectedStudentIds.length === 0 ? 'الكل' : selectedStudentIds.length}):
-            </span>
-            {(selectedBlockIds.length > 0 || selectedStudentIds.length > 0 || selectedCardTypes.length > 0) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedBlockIds([]);
-                  setSelectedStudentIds([]);
-                  setSelectedCardTypes([]);
-                  setAttendanceOnly(false);
-                }}
-                className="text-[0.72rem] font-semibold text-[var(--kam-primary)] hover:underline"
-              >
-                مسح كل الفلاتر
-              </button>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto kam-scrollbar">
-            {students.map((st) => {
-              const active = selectedStudentIds.includes(st.id);
-              return (
-                <button
-                  key={st.id}
-                  type="button"
-                  onClick={() => toggleItem(selectedStudentIds, st.id, setSelectedStudentIds)}
-                  className={`min-h-[34px] px-2.5 py-1 rounded-xl text-[0.72rem] font-semibold border transition-colors ${
-                    active
-                      ? 'bg-[var(--kam-primary)] text-white border-[var(--kam-primary)]'
-                      : 'bg-[var(--kam-surface-variant)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
-                  }`}
-                >
-                  #{st.studentNumber} {st.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </div>
 
-      {/* Leaderboard Ranking Table */}
-      <div className="rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)] overflow-hidden">
-        <div className="px-4 py-3 border-b border-[var(--kam-border)] bg-[var(--kam-surface-variant)]/50 flex items-center justify-between text-xs font-bold">
-          <span>ترتيب الأطفال ({rankedRows.length})</span>
-          <span>{attendanceOnly ? 'الحضور / الغياب' : 'النقاط وتفصيل الكروت'}</span>
-        </div>
+      {/* Sort & Filter Chips */}
+      <div className="flex items-center gap-1.5 overflow-x-auto kam-scrollbar">
+        {(
+          [
+            { id: 'HIGHEST', label: '🏆 الأعلى للأقل' },
+            { id: 'WEAKEST', label: '⚠️ الضعفاء والأقل أولاً' },
+            { id: 'ABSENT_ZERO', label: '🚫 غياب (0 حضور)' },
+            { id: 'ACTIVE_ONLY', label: '✓ المتفاعلين (>0)' },
+          ] as Array<{ id: SortFilterMode; label: string }>
+        ).map((chip) => (
+          <button
+            key={chip.id}
+            type="button"
+            onClick={() => setSortMode(chip.id)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold border whitespace-nowrap shrink-0 ${
+              sortMode === chip.id
+                ? 'bg-[var(--kam-gold)]/20 border-[var(--kam-gold)] text-[var(--kam-gold)]'
+                : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+            }`}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
 
-        <div className="divide-y divide-[var(--kam-border)]">
-          {rankedRows.map((row, idx) => {
+      {/* Block Filter & Card Filter Chips */}
+      <div className="flex items-center gap-1.5 overflow-x-auto kam-scrollbar">
+        <button
+          type="button"
+          onClick={() => setSelectedBlockId('ALL')}
+          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
+            selectedBlockId === 'ALL'
+              ? 'bg-[var(--kam-primary)]/20 border-[var(--kam-primary)] text-[var(--kam-primary)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+          }`}
+        >
+          كل البلوكات
+        </button>
+        {blocks.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            onClick={() => setSelectedBlockId(b.id)}
+            className="px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap"
+            style={{
+              backgroundColor:
+                selectedBlockId === b.id ? `${b.colorHex}26` : 'var(--kam-surface)',
+              borderColor:
+                selectedBlockId === b.id ? b.colorHex : 'var(--kam-border)',
+              color:
+                selectedBlockId === b.id ? b.colorHex : 'var(--kam-text-secondary)',
+            }}
+          >
+            {b.servantName}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setSelectedBlockId('UNASSIGNED')}
+          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
+            selectedBlockId === 'UNASSIGNED'
+              ? 'bg-[var(--kam-gold)]/20 border-[var(--kam-gold)] text-[var(--kam-gold)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+          }`}
+        >
+          بدون بلوك
+        </button>
+      </div>
+
+      <div className="flex items-center gap-1.5 overflow-x-auto kam-scrollbar">
+        <button
+          type="button"
+          onClick={() => setSelectedCardType('ALL')}
+          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap ${
+            selectedCardType === 'ALL'
+              ? 'bg-[var(--kam-primary)]/20 border-[var(--kam-primary)] text-[var(--kam-primary)]'
+              : 'bg-[var(--kam-surface)] border-[var(--kam-border)] text-[var(--kam-text-secondary)]'
+          }`}
+        >
+          كل الكروت
+        </button>
+        {allCards.map((c) => {
+          const active = selectedCardType === c.id;
+          const accent = isLight ? c.lightHex : c.darkHex;
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setSelectedCardType(c.id)}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap"
+              style={{
+                backgroundColor: active ? `${accent}26` : 'var(--kam-surface)',
+                borderColor: active ? accent : 'var(--kam-border)',
+                color: active ? accent : 'var(--kam-text-secondary)',
+              }}
+            >
+              {c.icon} {c.titleAr}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Leaderboard Student Cards */}
+      <div className="space-y-2">
+        {filteredRows.length === 0 ? (
+          <div className="rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)] p-8 text-center text-xs text-[var(--kam-text-muted)]">
+            لا يوجد أطفال مطابقين للفلاتر الحالية.
+          </div>
+        ) : (
+          filteredRows.map((row, idx) => {
             const rank = idx + 1;
-            const medalColor =
-              rank === 1
-                ? 'var(--kam-gold)'
-                : rank === 2
-                ? 'var(--kam-silver)'
-                : rank === 3
-                ? 'var(--kam-bronze)'
-                : 'var(--kam-text-muted)';
+            const blk = blocks.find((b) => b.id === row.student.blockId);
+            const blkColor = blk?.colorHex || '#6C7BFF';
 
             return (
-              <div
+              <button
                 key={row.student.id}
-                className="px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                type="button"
+                onClick={() => setSelectedStudent(row.student)}
+                className="w-full rounded-[16px] bg-[var(--kam-surface)] border border-[var(--kam-border)] p-3 text-right space-y-2 hover:border-[var(--kam-primary)]/50 transition-colors"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span
-                    className="w-7 text-center font-num text-sm font-extrabold shrink-0"
-                    style={{ color: medalColor }}
-                  >
-                    {rank <= 3 ? (rank === 1 ? '🥇' : rank === 2 ? '🥈' : '🥉') : `#${rank}`}
-                  </span>
-                  <AvatarBadge
-                    studentId={row.student.id}
-                    hasAvatar={row.student.hasAvatar}
-                    name={row.student.name}
-                    initials={row.student.avatarInitials}
-                    size="sm"
-                  />
-                  <div className="min-w-0">
-                    <div className="text-sm font-bold truncate">
-                      <span className="font-num text-xs text-[var(--kam-text-muted)] ml-1.5">
-                        #{row.student.studentNumber}
-                      </span>
-                      {row.student.name}
-                    </div>
-                    {!attendanceOnly && (
-                      <div className="flex flex-wrap items-center gap-2 text-[0.72rem] text-[var(--kam-text-muted)] mt-0.5">
-                        {allCards.map((c) => {
-                          const pts = row.byCard[c.id];
-                          if (!pts) return null;
-                          return (
-                            <span key={c.id} className="font-num">
-                              {c.icon} {c.titleAr}: {pts}
-                            </span>
-                          );
-                        })}
-                        {row.eventsCount === 0 && <span>لا توجد كروت في الفترة</span>}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="w-7 text-center font-num text-sm font-extrabold shrink-0">
+                      {sortMode === 'HIGHEST' && rank <= 3
+                        ? rank === 1
+                          ? '🥇'
+                          : rank === 2
+                          ? '🥈'
+                          : '🥉'
+                        : `#${rank}`}
+                    </span>
+                    <AvatarBadge
+                      studentId={row.student.id}
+                      hasAvatar={row.student.hasAvatar}
+                      directBase64={row.student.avatarBase64}
+                      name={row.student.name}
+                      initials={row.student.avatarInitials}
+                      size="sm"
+                      accentHex={blkColor}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-[var(--kam-text-primary)] truncate">
+                        {row.student.name}
                       </div>
-                    )}
+                      <div className="flex items-center gap-1.5 text-[11px] text-[var(--kam-text-secondary)]">
+                        <span className="font-num">رقم #{row.student.studentNumber}</span>
+                        <span>•</span>
+                        <span style={{ color: blkColor }}>
+                          {blk ? blk.servantName : 'بدون بلوك'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-2.5 py-1 rounded-xl bg-[var(--kam-gold)]/18 text-[var(--kam-gold)] font-num font-extrabold text-sm shrink-0">
+                    {row.displayPoints} ن
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
-                  <span className="text-xs font-num text-[var(--kam-success)]">
-                    حاضر {row.presentWeeks}
+                {/* Colored Per-Card Breakdown Pills */}
+                <div className="flex items-center flex-wrap gap-1.5 pt-0.5">
+                  <span
+                    className={`px-2 py-0.5 rounded-md font-num text-[10px] font-bold ${
+                      row.presentCount > 0
+                        ? 'bg-[#2CB578]/18 text-[#2CB578]'
+                        : 'bg-[#EF5350]/18 text-[#EF5350]'
+                    }`}
+                  >
+                    الحضور: {row.presentCount}
                   </span>
-                  <span className="text-xs font-num text-[var(--kam-danger)]">
-                    غائب {row.absentWeeks}
-                  </span>
-                  <span className="text-base font-num font-extrabold text-[var(--kam-primary)] min-w-14 text-left">
-                    {row.totalPoints}
-                  </span>
+                  {allCards.map((c) => {
+                    const count = row.byCardCounts[c.id] ?? 0;
+                    const pts = row.byCardPoints[c.id] ?? 0;
+                    if (!pts) return null;
+                    const accent = isLight ? c.lightHex : c.darkHex;
+                    return (
+                      <span
+                        key={c.id}
+                        className="px-2 py-0.5 rounded-md font-num text-[10px] font-bold"
+                        style={{
+                          backgroundColor: `${accent}22`,
+                          color: accent,
+                        }}
+                      >
+                        {c.icon} {c.titleAr}: +{pts} ({count})
+                      </span>
+                    );
+                  })}
                 </div>
-              </div>
+              </button>
             );
-          })}
-        </div>
-      </div>
-
-      {/* Bottom Period Summary Card */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-4 rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)]">
-          <div className="text-xs text-[var(--kam-text-muted)]">عدد الحاضرين</div>
-          <div className="mt-1 text-2xl font-num font-extrabold text-[var(--kam-success)]">
-            {summary.presentCount}
-          </div>
-        </div>
-        <div className="p-4 rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)]">
-          <div className="text-xs text-[var(--kam-text-muted)]">عدد الغائبين</div>
-          <div className="mt-1 text-2xl font-num font-extrabold text-[var(--kam-danger)]">
-            {summary.absentCount}
-          </div>
-        </div>
-        <div className="p-4 rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)]">
-          <div className="text-xs text-[var(--kam-text-muted)]">نقاط الفترة (حسب الفلاتر)</div>
-          <div className="mt-1 text-2xl font-num font-extrabold text-[var(--kam-primary)]">
-            {summary.filteredPoints}
-          </div>
-        </div>
-        <div className="p-4 rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)]">
-          <div className="text-xs text-[var(--kam-text-muted)]">إجمالي نقاط التطبيق بالفترة</div>
-          <div className="mt-1 text-2xl font-num font-extrabold text-[var(--kam-gold)]">
-            {summary.totalAppPointsInPeriod}
-          </div>
-        </div>
+          })
+        )}
       </div>
 
       <CalendarTreeModal
@@ -423,6 +487,11 @@ export const ReportsLeaderboardPage: React.FC<ReportsLeaderboardPageProps> = ({ 
         onClose={() => setCalendarOpen(false)}
         selectedWeekKeys={selectedWeeks}
         onApply={setSelectedWeeks}
+      />
+
+      <ChildProfileModal
+        student={selectedStudent}
+        onClose={() => setSelectedStudent(null)}
       />
     </div>
   );

@@ -11,9 +11,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { extractInitials, normalizeArabicName } from '../lib/arabic';
-import { computeFractionalPosition, getEffectiveStudentPosition } from '../lib/kamRules';
+import { computeFractionalPosition, getEffectiveStudentPosition, buildAttendanceDocId, buildMonthlyBalanceDocId } from '../lib/kamRules';
 import { packAvatars, sha256Hex } from '../lib/media';
-import type { ChildNoteType, Group, Student, VisitationStatus } from '../types/kam';
+import type { AttendanceRecord, CardEvent, ChildNote, ChildNoteType, Group, MonthlyBalance, Student, VisitationStatus } from '../types/kam';
 
 export function getNextStudentNumber(students: Student[]): number {
   let maxNum = 0;
@@ -330,3 +330,91 @@ export async function addChildNote(params: {
 export async function deleteChildNote(groupId: string, noteId: string): Promise<void> {
   await deleteDoc(doc(db, 'groups', groupId, 'childNotes', noteId));
 }
+
+export async function mergeDuplicateStudentsInFirestore(params: {
+  group: Group;
+  primary: Student;
+  duplicate: Student;
+  cardEvents: CardEvent[];
+  childNotes: ChildNote[];
+  attendance: AttendanceRecord[];
+  monthlyBalances: MonthlyBalance[];
+  actorUid: string;
+}): Promise<void> {
+  const { group, primary, duplicate, cardEvents, childNotes, attendance, monthlyBalances, actorUid } = params;
+  const batch = writeBatch(db);
+
+  // 1. Re-assign duplicate's cardEvents to primary
+  const dupEvents = cardEvents.filter((e) => e.studentId === duplicate.id);
+  const pointsAddedByMonth = new Map<string, { points: number; count: number }>();
+
+  for (const ev of dupEvents) {
+    batch.update(doc(db, 'groups', group.id, 'cardEvents', ev.id), {
+      studentId: primary.id,
+      studentName: primary.name,
+    });
+    const cur = pointsAddedByMonth.get(ev.monthKey) ?? { points: 0, count: 0 };
+    pointsAddedByMonth.set(ev.monthKey, {
+      points: cur.points + ev.points,
+      count: cur.count + 1,
+    });
+  }
+
+  // 2. Recompute / merge monthlyBalances
+  const dupBalances = monthlyBalances.filter((b) => b.studentId === duplicate.id);
+  for (const dbBal of dupBalances) {
+    batch.delete(doc(db, 'groups', group.id, 'monthlyBalances', dbBal.id));
+  }
+  for (const [monthKey, delta] of pointsAddedByMonth.entries()) {
+    const primaryBalId = buildMonthlyBalanceDocId(monthKey, primary.id);
+    const existingPrimaryBal = monthlyBalances.find((b) => b.id === primaryBalId);
+    const newTotal = (existingPrimaryBal?.totalPoints ?? 0) + delta.points;
+    const newCount = (existingPrimaryBal?.eventsCount ?? 0) + delta.count;
+    batch.set(
+      doc(db, 'groups', group.id, 'monthlyBalances', primaryBalId),
+      {
+        groupId: group.id,
+        studentId: primary.id,
+        studentName: primary.name,
+        monthKey,
+        totalPoints: newTotal,
+        eventsCount: newCount,
+        lastUpdatedByUid: actorUid,
+        memberUids: group.memberUids,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+
+  // 3. Re-assign duplicate's childNotes to primary
+  const dupNotes = childNotes.filter((n) => n.studentId === duplicate.id);
+  for (const note of dupNotes) {
+    batch.update(doc(db, 'groups', group.id, 'childNotes', note.id), {
+      studentId: primary.id,
+      studentName: primary.name,
+    });
+  }
+
+  // 4. Re-assign duplicate's attendance records to primary if primary has no record for that week
+  const dupAtt = attendance.filter((a) => a.studentId === duplicate.id);
+  for (const att of dupAtt) {
+    batch.delete(doc(db, 'groups', group.id, 'attendance', att.id));
+    const primaryAttId = buildAttendanceDocId(att.weekKey, primary.id);
+    const primaryHasAtt = attendance.some((a) => a.id === primaryAttId);
+    if (!primaryHasAtt) {
+      batch.set(doc(db, 'groups', group.id, 'attendance', primaryAttId), {
+        ...att,
+        id: primaryAttId,
+        studentId: primary.id,
+        studentName: primary.name,
+      });
+    }
+  }
+
+  // 5. Delete duplicate student document
+  batch.delete(doc(db, 'groups', group.id, 'students', duplicate.id));
+
+  await batch.commit();
+}
+

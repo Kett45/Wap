@@ -93,13 +93,18 @@ export const GroupManagePage: React.FC = () => {
     ? `${group.inviteCode}-${group.dailyInviteToken}`
     : group.inviteCode;
 
+  const updatedAtMs = group.inviteCodeUpdatedAtMillis || Date.now();
+  const remainingMs = Math.max(0, 24 * 60 * 60 * 1000 - (Date.now() - updatedAtMs));
+  const remHours = Math.floor(remainingMs / (60 * 60 * 1000));
+  const remMinutes = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
+
   const hiddenBlockIds = userProfile?.hiddenBlockIds ?? [];
 
   const handleCopyCode = async () => {
     try {
       await navigator.clipboard.writeText(fullInviteCode);
       setCopied(true);
-      showToast('تم نسخ كود الدعوة اليومي', 'success');
+      showToast('تم نسخ رمز المجموعة اليومي', 'success');
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       showToast(fullInviteCode, 'info');
@@ -107,10 +112,10 @@ export const GroupManagePage: React.FC = () => {
   };
 
   const handleShareCode = async () => {
-    const shareText = `كود الانضمام لفصل "${group.name}" في تطبيق نجم الكارت:\n${fullInviteCode}\n(صالح لمدة 24 ساعة)`;
+    const shareText = `انضم لمجموعة "${group.name}" في تطبيق نجم الكارت باستخدام الرمز اليومي: ${fullInviteCode} (صالح لمدة ٢٤ ساعة)`;
     if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: `دعوة لفصل ${group.name}`, text: shareText });
+        await navigator.share({ title: `رمز مجموعة نجم الكارت`, text: shareText });
         return;
       } catch {
         // User cancelled or share unavailable — fall back to clipboard
@@ -211,22 +216,22 @@ export const GroupManagePage: React.FC = () => {
   const bannedEntries = group.bannedServantEntries ?? [];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-20">
-      {/* Header & Class Info */}
-      <section className="rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)] p-4 sm:p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="relative">
+    <div className="space-y-4 pb-16">
+      {/* Header & Class Info (Matching GroupInvitationsScreen in GroupAndSettingsScreens.kt) */}
+      <section className="rounded-[20px] bg-[var(--kam-surface)] border border-[var(--kam-gold)]/45 p-4 space-y-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative shrink-0">
               <AvatarBadge
                 directBase64={group.avatarBase64}
                 name={group.name}
                 size="lg"
-                accentColor="#5E6AD2"
+                accentHex="#E5A436"
               />
               {isAdmin && (
                 <label
                   aria-label="تغيير صورة الفصل"
-                  className="absolute -bottom-1 -left-1 min-h-[28px] min-w-[28px] flex items-center justify-center rounded-full bg-[var(--kam-primary)] text-white cursor-pointer shadow"
+                  className="absolute -bottom-1 -left-1 w-7 h-7 flex items-center justify-center rounded-full bg-[var(--kam-primary)] text-white cursor-pointer shadow"
                 >
                   <Camera className="w-3.5 h-3.5" />
                   <input
@@ -238,86 +243,101 @@ export const GroupManagePage: React.FC = () => {
                 </label>
               )}
             </div>
-            <div>
-              <h1 className="text-lg font-extrabold">{group.name}</h1>
-              <p className="text-xs text-[var(--kam-text-muted)]">
-                أمين الفصل: {getServantDisplayName(group.adminId, group.adminName)} ·{' '}
-                <span className="font-num">{group.memberUids.length}</span> خادم ·{' '}
-                <span className="font-num">{students.length}</span> طفل
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-[var(--kam-gold)]">
+                {isPrimaryAdmin ? '👑 أنت أمين المجموعة' : isAdmin ? '⭐ أنت مساعد الأمين' : 'خادم في المجموعة'}
+              </div>
+              <h1 className="text-base font-extrabold truncate">{group.name}</h1>
+              <p className="text-xs text-[var(--kam-text-secondary)]">
+                الأمين: {getServantDisplayName(group.adminId, group.adminName)} •{' '}
+                <span className="font-num">{blocks.length}</span>/50 بلوك •{' '}
+                <span className="font-num">{students.length}</span>/150 طفل
               </p>
             </div>
           </div>
-
-          {isPrimaryAdmin && (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (editingGroupName.trim() && editingGroupName.trim() !== group.name) {
-                  await updatePolicies({ name: editingGroupName.trim() });
-                }
-              }}
-              className="flex items-center gap-2"
-            >
-              <input
-                type="text"
-                maxLength={100}
-                value={editingGroupName}
-                onChange={(e) => setEditingGroupName(e.target.value)}
-                aria-label="تعديل اسم الفصل"
-                className="flex-1 sm:w-48 min-h-[40px] px-3 py-1.5 rounded-xl bg-[var(--kam-surface-variant)] border border-[var(--kam-border)] text-xs"
-              />
-              <button
-                type="submit"
-                className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-[var(--kam-primary)] text-white text-xs font-bold shrink-0"
-              >
-                حفظ الاسم
-              </button>
-            </form>
-          )}
         </div>
 
-        {/* Daily Invite Code — Strictly visible ONLY to Admins */}
-        {isAdmin && (
-          <div className="p-4 rounded-2xl bg-[var(--kam-surface-variant)]/70 border border-[var(--kam-border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <div className="text-xs font-semibold text-[var(--kam-text-secondary)] flex items-center gap-1.5">
-                <KeyRound className="w-3.5 h-3.5 text-[var(--kam-primary)]" />
-                <span>كود الدعوة اليومي (للمسؤولين فقط · صالح 24 ساعة)</span>
+        {isPrimaryAdmin && (
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (editingGroupName.trim() && editingGroupName.trim() !== group.name) {
+                await updatePolicies({ name: editingGroupName.trim() });
+              }
+            }}
+            className="flex items-center gap-2"
+          >
+            <input
+              type="text"
+              maxLength={100}
+              value={editingGroupName}
+              onChange={(e) => setEditingGroupName(e.target.value)}
+              aria-label="تعديل اسم الفصل"
+              className="flex-1 h-10 px-3 rounded-xl bg-[var(--kam-bg)] border border-[var(--kam-border)] text-xs"
+            />
+            <button
+              type="submit"
+              className="h-10 px-3.5 rounded-xl bg-[var(--kam-primary)] text-[var(--kam-on-primary)] text-xs font-bold shrink-0"
+            >
+              حفظ الاسم
+            </button>
+          </form>
+        )}
+
+        {/* Daily Invite Code Box — Strictly visible ONLY to Admins */}
+        {isAdmin ? (
+          <div className="space-y-2.5">
+            <div className="p-3.5 rounded-[14px] bg-[var(--kam-bg)] border border-[var(--kam-gold)]/55 flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] text-[var(--kam-text-secondary)]">
+                    رمز الدعوة اليومي (للأمين ومساعده)
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-[var(--kam-gold)]/18 text-[var(--kam-gold)] font-num font-bold text-[10px]">
+                    ⏱ {remHours > 0 ? `${remHours}س ${remMinutes}د` : `${remMinutes}د`}
+                  </span>
+                </div>
+                <div
+                  dir="ltr"
+                  className="mt-1 text-lg font-num font-extrabold tracking-wider text-[var(--kam-gold)] text-right"
+                >
+                  {fullInviteCode}
+                </div>
               </div>
-              <div dir="ltr" className="mt-1 text-lg font-num font-extrabold tracking-widest text-right">
-                {fullInviteCode}
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  title="نسخ الرمز"
+                  className="w-10 h-10 rounded-xl bg-[var(--kam-gold)]/20 text-[var(--kam-gold)] flex items-center justify-center"
+                >
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={regenerateInviteToken}
+                  title="توليد رمز جديد فوراً"
+                  className="w-10 h-10 rounded-xl bg-[var(--kam-primary)]/20 text-[var(--kam-primary)] flex items-center justify-center"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleShareCode}
-                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-xs font-bold flex items-center gap-1.5"
-              >
-                <Share2 className="w-3.5 h-3.5 text-[var(--kam-primary)]" />
-                <span>مشاركة</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyCode}
-                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-xs font-bold flex items-center gap-1.5"
-              >
-                {copied ? (
-                  <Check className="w-3.5 h-3.5 text-[var(--kam-success)]" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-                <span>{copied ? 'تم النسخ' : 'نسخ'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={regenerateInviteToken}
-                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[var(--kam-primary)] text-white text-xs font-bold flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>تجديد</span>
-              </button>
-            </div>
+
+            <button
+              type="button"
+              onClick={handleShareCode}
+              className="w-full h-11 rounded-xl bg-[var(--kam-gold)] text-[#07080D] font-extrabold text-xs flex items-center justify-center gap-2 hover:opacity-95"
+            >
+              <Share2 className="w-4 h-4" />
+              <span>مشاركة رمز المجموعة مع الخدام</span>
+            </button>
+          </div>
+        ) : (
+          <div className="p-3 rounded-xl bg-[var(--kam-bg)] border border-[var(--kam-border)] flex items-center gap-2 text-xs text-[var(--kam-text-secondary)]">
+            <KeyRound className="w-4 h-4 text-[var(--kam-text-muted)] shrink-0" />
+            <span>رمز الدعوة يظهر فقط لأمين المجموعة ومساعده للحفاظ على أمان الفصل.</span>
           </div>
         )}
       </section>

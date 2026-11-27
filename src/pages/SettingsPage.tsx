@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
+  Cloud,
+  Download,
   Eye,
   EyeOff,
   LogOut,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useKam } from '../context/KamContext';
 import { AvatarBadge } from '../components/ui/AvatarBadge';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 import {
   ALL_STANDARD_CARD_IDS,
   COLOR_KEY_PALETTE,
@@ -38,6 +41,19 @@ import {
 } from '../hooks/useTheme';
 import type { CustomCardColorKey, CustomCardFrequency } from '../types/kam';
 
+const COUNTRY_CODES = [
+  { code: '+20', label: '🇪🇬 +20 مصر' },
+  { code: '+966', label: '🇸🇦 +966 السعودية' },
+  { code: '+971', label: '🇦🇪 +971 الإمارات' },
+  { code: '+965', label: '🇰🇼 +965 الكويت' },
+  { code: '+962', label: '🇯🇴 +962 الأردن' },
+  { code: '+1', label: '🇺🇸 +1 أمريكا/كندا' },
+  { code: '+61', label: '🇦🇺 +61 أستراليا' },
+  { code: '+44', label: '🇬🇧 +44 بريطانيا' },
+  { code: '+49', label: '🇩🇪 +49 ألمانيا' },
+  { code: '+33', label: '🇫🇷 +33 فرنسا' },
+];
+
 export const SettingsPage: React.FC = () => {
   const {
     userProfile,
@@ -46,6 +62,7 @@ export const SettingsPage: React.FC = () => {
     members,
     isAdmin,
     isPrimaryAdmin,
+    syncStatus,
     updateProfile,
     updatePolicies,
     saveOwnMemberProfile,
@@ -55,10 +72,13 @@ export const SettingsPage: React.FC = () => {
     showToast,
   } = useKam();
 
+  const { isInstallable, isInstalled, isIOS, triggerInstall } = usePWAInstall();
+
   const myMember = members.find((m) => m.uid === userProfile?.userId);
   const myAvatar = myMember?.avatarBase64 || myMember?.avatar || '';
 
   const [displayName, setDisplayName] = useState(userProfile?.displayName ?? '');
+  const [countryCode, setCountryCode] = useState('+20');
   const [phone, setPhone] = useState(myMember?.primaryPhone || myMember?.phone || '');
   const [secondaryPhone, setSecondaryPhone] = useState(myMember?.secondaryPhone || '');
   const [showPhone, setShowPhone] = useState(myMember?.showPhone ?? false);
@@ -204,14 +224,24 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const normalizeWithCountry = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('+')) return trimmed;
+    const digits = trimmed.replace(/^0+/, '');
+    return `${countryCode}${digits}`;
+  };
+
   const handleSavePersonal = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const formattedPrimary = normalizeWithCountry(phone);
+      const formattedSecondary = normalizeWithCountry(secondaryPhone);
       await saveOwnMemberProfile({
         displayName: displayName.trim() || userProfile.displayName,
-        phone: phone.trim(),
-        primaryPhone: phone.trim(),
-        secondaryPhone: secondaryPhone.trim(),
+        phone: formattedPrimary,
+        primaryPhone: formattedPrimary,
+        secondaryPhone: formattedSecondary,
         showPhone,
         phoneHidden: !showPhone,
       });
@@ -233,13 +263,62 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5 pb-20">
-      <div className="pb-3 border-b border-[var(--kam-border)]">
-        <h1 className="text-xl font-extrabold">الإعدادات والتفضيلات</h1>
+    <div className="space-y-4 pb-20">
+      <div className="pb-2 border-b border-[var(--kam-border)]">
+        <h1 className="text-lg font-extrabold">الإعدادات والتفضيلات</h1>
         <p className="text-xs text-[var(--kam-text-muted)]">
-          تخصيص بروفايلك، الخطوط وأحجام الواجهة، الكروت الظاهرة، وسياسات الفصل
+          تخصيص بروفايلك، العمل بدون إنترنت، الخطوط وأحجام الواجهة، وسياسات الفصل
         </p>
       </div>
+
+      {/* PWA Install & Offline Persistence Card */}
+      <section className="rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-primary)]/40 p-4 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-extrabold flex items-center gap-2">
+            <Cloud className="w-4 h-4 text-[var(--kam-primary)]" />
+            <span>العمل بدون إنترنت وتثبيت التطبيق (PWA)</span>
+          </h2>
+          <span
+            className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+              syncStatus === 'OFFLINE'
+                ? 'bg-[#E5A436]/20 text-[#E5A436]'
+                : syncStatus === 'SYNCING'
+                ? 'bg-[var(--kam-primary)]/20 text-[var(--kam-primary)]'
+                : 'bg-[#2CB578]/20 text-[#2CB578]'
+            }`}
+          >
+            {syncStatus === 'OFFLINE'
+              ? 'وضع بدون إنترنت'
+              : syncStatus === 'SYNCING'
+              ? 'جاري المزامنة...'
+              : 'مزامنة IndexedDB مفعّلة ✓'}
+          </span>
+        </div>
+
+        <p className="text-xs text-[var(--kam-text-secondary)] leading-relaxed">
+          يتم حفظ جميع بيانات الفصل، الحضور، الكروت، والافتقاد محلياً في المتصفح (IndexedDB) لتعمل بدون إنترنت، وتتم المزامنة تلقائياً فور عودة الاتصال بدون فقدان أو تكرار.
+        </p>
+
+        {!isInstalled && (
+          <div className="pt-1">
+            {isInstallable ? (
+              <button
+                type="button"
+                onClick={() => triggerInstall()}
+                className="w-full h-11 rounded-xl bg-[var(--kam-primary)] text-[var(--kam-on-primary)] font-bold text-xs flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                <span>تثبيت التطبيق على الشاشة الرئيسية (يعمل بدون إنترنت)</span>
+              </button>
+            ) : isIOS ? (
+              <div className="p-2.5 rounded-xl bg-[var(--kam-surface-variant)] text-xs text-[var(--kam-text-secondary)]">
+                لتثبيت التطبيق على iPhone: اضغط على زر المشاركة في Safari ثم اختر{' '}
+                <strong className="text-[var(--kam-text-primary)]">إضافة إلى الشاشة الرئيسية (Add to Home Screen)</strong>.
+              </div>
+            ) : null}
+          </div>
+        )}
+      </section>
 
       {/* Personal Profile, Servant Avatar & Phones */}
       <section className="rounded-2xl bg-[var(--kam-surface)] border border-[var(--kam-border)] p-4 sm:p-5 space-y-4">
@@ -321,6 +400,27 @@ export const SettingsPage: React.FC = () => {
               onChange={(e) => setDisplayName(e.target.value)}
               className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-[var(--kam-surface-variant)] border border-[var(--kam-border)] text-sm"
             />
+          </div>
+
+          <div>
+            <label
+              htmlFor="prof-country-code"
+              className="block text-xs font-semibold text-[var(--kam-text-secondary)] mb-1"
+            >
+              كود الدولة لأرقام الهاتف والواتساب
+            </label>
+            <select
+              id="prof-country-code"
+              value={countryCode}
+              onChange={(e) => setCountryCode(e.target.value)}
+              className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface-variant)] border border-[var(--kam-border)] text-xs font-bold"
+            >
+              {COUNTRY_CODES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

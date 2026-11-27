@@ -3,6 +3,10 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   getFirestore,
   initializeFirestore,
+  memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  persistentSingleTabManager,
   setLogLevel,
   type Firestore,
 } from 'firebase/firestore';
@@ -35,16 +39,46 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 setLogLevel('silent');
 
 function createFirestoreInstance(): Firestore {
+  // 1. Try multi-tab IndexedDB persistent cache so offline mutations and reads survive reloads and offline mode
   try {
     return initializeFirestore(
       app,
       {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
         experimentalForceLongPolling: true,
       },
       FIRESTORE_DATABASE_ID
     );
   } catch {
-    return getFirestore(app, FIRESTORE_DATABASE_ID);
+    // 2. Fallback to single-tab IndexedDB cache
+    try {
+      return initializeFirestore(
+        app,
+        {
+          localCache: persistentLocalCache({
+            tabManager: persistentSingleTabManager({ forceOwnership: true }),
+          }),
+          experimentalForceLongPolling: true,
+        },
+        FIRESTORE_DATABASE_ID
+      );
+    } catch {
+      // 3. Fallback to memory cache or existing instance if already initialized
+      try {
+        return initializeFirestore(
+          app,
+          {
+            localCache: memoryLocalCache(),
+            experimentalForceLongPolling: true,
+          },
+          FIRESTORE_DATABASE_ID
+        );
+      } catch {
+        return getFirestore(app, FIRESTORE_DATABASE_ID);
+      }
+    }
   }
 }
 

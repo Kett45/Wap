@@ -1,14 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ChevronDown,
-  ClipboardCheck,
+  Download,
   HeartHandshake,
   Home,
   MessageSquare,
   RefreshCw,
   Settings,
-  Trophy,
   Users,
+  Wifi,
+  WifiOff,
+  X,
 } from 'lucide-react';
 import { KamProvider, useKam } from './context/KamContext';
 import { ToastContainer } from './components/ui/ToastContainer';
@@ -23,9 +24,132 @@ import { MessagesPage } from './pages/MessagesPage';
 import { GroupManagePage } from './pages/GroupManagePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { getLocalReadCount } from './services/chatService';
+import { buildMonthlyBalanceDocId } from './lib/kamRules';
+import { usePWAInstall } from './hooks/usePWAInstall';
 
-type MainTab = 'HOME' | 'MESSAGES' | 'GROUP' | 'SETTINGS';
-type SubView = 'NONE' | 'SMART_ATTENDANCE' | 'VISITATION' | 'LEADERBOARD';
+type MainTab = 'HOME' | 'VISITATION' | 'MESSAGES' | 'GROUP' | 'SETTINGS';
+type SubView = 'NONE' | 'SMART_ATTENDANCE' | 'LEADERBOARD';
+
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; errorMsg: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMsg: '' };
+  }
+
+  static getDerivedStateFromError(error: unknown) {
+    return {
+      hasError: true,
+      errorMsg: error instanceof Error ? error.message : 'حدث خطأ غير متوقع',
+    };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-dvh bg-[#07080D] text-[#F4F6FB] flex items-center justify-center p-6">
+          <div className="max-w-sm w-full rounded-2xl bg-[#11131C] border border-[#23283B] p-6 text-center space-y-4">
+            <div className="text-lg font-extrabold text-[#EF5350]">حدث خطأ أثناء تحميل الشاشة</div>
+            <p className="text-xs text-[#9AA2BC] break-words">{this.state.errorMsg}</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full h-11 rounded-xl bg-[#6C7BFF] text-white font-bold text-xs"
+            >
+              إعادة تحميل التطبيق
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const StudentHoldQuickPeekRootOverlay: React.FC = () => {
+  const {
+    quickPeekStudent,
+    setQuickPeekStudent,
+    blocks,
+    monthlyBalances,
+    selectedMonthKey,
+    avatarCache,
+  } = useKam();
+
+  if (!quickPeekStudent) return null;
+
+  const block = blocks.find((b) => b.id === quickPeekStudent.blockId);
+  const blockColor = block?.colorHex || '#6C7BFF';
+  const blockName = block ? `بلوك ${block.servantName}` : 'بدون بلوك';
+  const balId = buildMonthlyBalanceDocId(selectedMonthKey, quickPeekStudent.id);
+  const monthPts = monthlyBalances.find((b) => b.id === balId)?.totalPoints ?? 0;
+  const packedAvatar = avatarCache[quickPeekStudent.id] || quickPeekStudent.avatarBase64;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={() => setQuickPeekStudent(null)}
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-5"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[330px] rounded-[24px] bg-[var(--kam-surface)] border-2 p-5 flex flex-col items-center text-center shadow-2xl space-y-3"
+        style={{ borderColor: blockColor }}
+      >
+        <div className="w-full flex items-center justify-between">
+          <span
+            className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold"
+            style={{ backgroundColor: `${blockColor}24`, color: blockColor }}
+          >
+            {blockName}
+          </span>
+          <button
+            type="button"
+            onClick={() => setQuickPeekStudent(null)}
+            className="w-7 h-7 rounded-full bg-[var(--kam-surface-variant)] flex items-center justify-center text-[var(--kam-text-muted)]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <AvatarBadge
+          studentId={quickPeekStudent.id}
+          directBase64={packedAvatar}
+          name={quickPeekStudent.name}
+          initials={quickPeekStudent.avatarInitials}
+          accentHex={blockColor}
+          size="xl"
+        />
+
+        <div className="space-y-1">
+          <div className="text-lg font-extrabold text-[var(--kam-text-primary)] leading-snug">
+            {quickPeekStudent.name}
+          </div>
+          <div className="flex items-center justify-center gap-2 text-xs">
+            <span className="font-num font-bold text-[var(--kam-text-secondary)]">
+              رقم #{quickPeekStudent.studentNumber}
+            </span>
+            <span className="px-2.5 py-0.5 rounded-md bg-[var(--kam-gold)]/20 text-[var(--kam-gold)] font-num font-bold">
+              {monthPts} نقطة هذا الشهر
+            </span>
+          </div>
+        </div>
+
+        {quickPeekStudent.lastMemorizedText && (
+          <div className="w-full rounded-xl bg-[#22B8B0]/12 border border-[#22B8B0]/35 px-3 py-2 text-right">
+            <div className="text-[10px] font-bold text-[#22B8B0]">📖 آخر تسميع محفوظات:</div>
+            <div className="text-xs font-semibold text-[var(--kam-text-primary)] mt-0.5">
+              {quickPeekStudent.lastMemorizedText}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const MainShell: React.FC = () => {
   const {
@@ -35,18 +159,19 @@ const MainShell: React.FC = () => {
     userProfile,
     isPreviewMode,
     group,
-    joinedGroups,
-    members,
     isAdmin,
     chatMeta,
     dmRooms,
-    switchGroup,
+    syncStatus,
+    isInsideActiveChatRoom,
+    setIsInsideActiveChatRoom,
     refreshAllData,
   } = useKam();
 
+  const { isInstallable, isInstalled, triggerInstall } = usePWAInstall();
+
   const [activeTab, setActiveTab] = useState<MainTab>('HOME');
   const [subView, setSubView] = useState<SubView>('NONE');
-  const [syncingTop, setSyncingTop] = useState(false);
   const lastHomeClickRef = useRef<number>(0);
 
   const canSeeLeaderboard = isAdmin || group?.showLeaderboard !== false;
@@ -57,11 +182,17 @@ const MainShell: React.FC = () => {
     }
   }, [subView, canSeeLeaderboard]);
 
+  useEffect(() => {
+    if (activeTab !== 'MESSAGES' && isInsideActiveChatRoom) {
+      setIsInsideActiveChatRoom(false);
+    }
+  }, [activeTab, isInsideActiveChatRoom, setIsInsideActiveChatRoom]);
+
   if (authLoading) {
     return (
       <div className="min-h-dvh bg-[var(--kam-bg)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-[var(--kam-primary)] text-white flex items-center justify-center font-num font-bold animate-pulse">
+          <div className="w-12 h-12 rounded-2xl bg-[var(--kam-primary)] text-white flex items-center justify-center font-num font-bold animate-pulse">
             kAM
           </div>
           <span className="text-xs text-[var(--kam-text-muted)]">جاري التحميل...</span>
@@ -78,31 +209,24 @@ const MainShell: React.FC = () => {
     return <GroupOnboardingPage />;
   }
 
-  const myMember = members.find((m) => m.uid === userProfile.userId);
-  const myAvatar = myMember?.avatarBase64 || myMember?.avatar || '';
-
-  const handleHomeNavClick = () => {
+  const handleTabSelect = (tab: MainTab) => {
     const now = Date.now();
-    if (subView !== 'NONE') {
-      setSubView('NONE');
+    if (tab === 'HOME') {
+      if (subView !== 'NONE') {
+        setSubView('NONE');
+        setActiveTab('HOME');
+        lastHomeClickRef.current = now;
+        return;
+      }
+      if (activeTab === 'HOME' && now - lastHomeClickRef.current < 450) {
+        refreshAllData();
+      }
       setActiveTab('HOME');
       lastHomeClickRef.current = now;
       return;
     }
-    if (activeTab === 'HOME' && now - lastHomeClickRef.current < 450) {
-      refreshAllData();
-    }
-    setActiveTab('HOME');
-    lastHomeClickRef.current = now;
-  };
-
-  const handleTopSync = async () => {
-    setSyncingTop(true);
-    try {
-      await refreshAllData();
-    } finally {
-      setSyncingTop(false);
-    }
+    setSubView('NONE');
+    setActiveTab(tab);
   };
 
   // Unread total for Messages badge
@@ -123,17 +247,18 @@ const MainShell: React.FC = () => {
     badge?: number;
   }> = [
     { id: 'HOME', label: 'الرئيسية', icon: Home },
+    { id: 'VISITATION', label: 'الافتقاد', icon: HeartHandshake },
     { id: 'MESSAGES', label: 'الرسائل', icon: MessageSquare, badge: totalUnread },
-    { id: 'GROUP', label: 'الفصل', icon: Users },
+    { id: 'GROUP', label: 'المجموعة', icon: Users },
     { id: 'SETTINGS', label: 'الإعدادات', icon: Settings },
   ];
+
+  const showBottomBar =
+    subView === 'NONE' && !(activeTab === 'MESSAGES' && isInsideActiveChatRoom);
 
   const renderContent = () => {
     if (subView === 'SMART_ATTENDANCE') {
       return <SmartAttendancePage onBack={() => setSubView('NONE')} />;
-    }
-    if (subView === 'VISITATION') {
-      return <VisitationSwipePage onBack={() => setSubView('NONE')} />;
     }
     if (subView === 'LEADERBOARD' && canSeeLeaderboard) {
       return <ReportsLeaderboardPage onBack={() => setSubView('NONE')} />;
@@ -144,10 +269,12 @@ const MainShell: React.FC = () => {
         return (
           <HomePage
             onOpenSmartAttendance={() => setSubView('SMART_ATTENDANCE')}
-            onOpenVisitation={() => setSubView('VISITATION')}
+            onOpenVisitation={() => setActiveTab('VISITATION')}
             onOpenLeaderboard={() => setSubView('LEADERBOARD')}
           />
         );
+      case 'VISITATION':
+        return <VisitationSwipePage onBack={() => setActiveTab('HOME')} />;
       case 'MESSAGES':
         return <MessagesPage />;
       case 'GROUP':
@@ -158,224 +285,143 @@ const MainShell: React.FC = () => {
   };
 
   return (
-    <div className="min-h-dvh bg-[var(--kam-bg)] text-[var(--kam-text-primary)] flex flex-col md:flex-row">
-      {/* Compact Sticky Mobile Top App Bar (~52px) */}
-      <header className="md:hidden sticky top-0 z-30 h-13 px-3 bg-[var(--kam-surface)]/92 backdrop-blur-md border-b border-[var(--kam-border)] flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            setSubView('NONE');
-            setActiveTab('SETTINGS');
-          }}
-          aria-label="ملفي الشخصي والإعدادات"
-          className="flex items-center gap-2 min-h-[44px] pr-0.5 pl-1 shrink-0"
-        >
-          <AvatarBadge
-            directBase64={myAvatar}
-            name={userProfile.displayName}
-            size="xs"
-            online
-          />
-        </button>
-
-        <div className="flex-1 min-w-0 flex items-center justify-center">
-          {joinedGroups.length > 1 ? (
-            <div className="relative max-w-full">
-              <select
-                aria-label="تبديل الفصل النشط"
-                value={group?.id || ''}
-                onChange={(e) => switchGroup(e.target.value)}
-                className="appearance-none bg-[var(--kam-surface-variant)] border border-[var(--kam-border)] rounded-xl pr-3 pl-7 py-1.5 text-xs font-extrabold text-[var(--kam-text-primary)] max-w-[13rem] truncate"
-              >
-                {joinedGroups.map((g) => (
-                  <option key={g.id} value={g.id} className="bg-[var(--kam-surface)]">
-                    {g.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-[var(--kam-text-muted)] pointer-events-none absolute left-2 top-1/2 -translate-y-1/2" />
-            </div>
-          ) : (
-            <span className="text-sm font-extrabold truncate">{group?.name || 'نجم الكارت'}</span>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={handleTopSync}
-          disabled={syncingTop}
-          aria-label="تحديث البيانات"
-          className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[var(--kam-text-secondary)] hover:text-[var(--kam-primary)] shrink-0"
-        >
-          <RefreshCw className={`w-4 h-4 ${syncingTop ? 'animate-spin' : ''}`} />
-        </button>
-      </header>
-
-      {/* Desktop Side Rail (RTL Right) */}
-      <aside className="hidden md:flex md:w-60 lg:w-64 shrink-0 flex-col border-l border-[var(--kam-border)] bg-[var(--kam-surface)] sticky top-0 h-screen">
-        <div className="px-4 py-4 border-b border-[var(--kam-border)] flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setSubView('NONE');
-              setActiveTab('SETTINGS');
-            }}
-            aria-label="الملف الشخصي والإعدادات"
-            className="shrink-0"
-          >
-            <AvatarBadge
-              directBase64={myAvatar}
-              name={userProfile.displayName}
-              size="sm"
-              online
-            />
-          </button>
-          <div className="min-w-0">
-            <div className="text-sm font-extrabold leading-tight truncate">نجم الكارت</div>
-            <div className="text-xs text-[var(--kam-text-muted)] truncate">
-              {userProfile.displayName}
-            </div>
-          </div>
-        </div>
-
-        <nav aria-label="التنقل الرئيسي" className="p-3 space-y-1 flex-1 overflow-y-auto kam-scrollbar">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = subView === 'NONE' && activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  if (item.id === 'HOME') {
-                    handleHomeNavClick();
-                  } else {
-                    setSubView('NONE');
-                    setActiveTab(item.id);
-                  }
-                }}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-between transition-colors ${
-                  active
-                    ? 'bg-[var(--kam-primary-container)] text-[var(--kam-primary)]'
-                    : 'text-[var(--kam-text-secondary)] hover:bg-[var(--kam-surface-variant)] hover:text-[var(--kam-text-primary)]'
-                }`}
-              >
-                <span className="flex items-center gap-2.5">
-                  <Icon className="w-4 h-4 shrink-0" />
-                  <span>{item.label}</span>
+    <div className="min-h-dvh bg-[var(--kam-bg)] text-[var(--kam-text-primary)] flex justify-center">
+      {/* Phone-sized container centered even on desktop browsers */}
+      <div className="w-full max-w-[500px] min-h-dvh bg-[var(--kam-bg)] sm:border-x sm:border-[var(--kam-border)]/50 relative flex flex-col">
+        {/* Compact Connectivity & Offline Sync Indicator Bar */}
+        <div className="sticky top-0 z-30 px-3 py-1 bg-[var(--kam-surface)]/95 backdrop-blur-md border-b border-[var(--kam-border)]/70 flex items-center justify-between gap-2 text-[11px]">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {syncStatus === 'OFFLINE' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-[#E5A436] shrink-0" />
+                <WifiOff className="w-3.5 h-3.5 text-[#E5A436] shrink-0" />
+                <span className="font-bold text-[#E5A436] truncate">
+                  وضع بدون إنترنت — يتم حفظ التغييرات محلياً
                 </span>
-                {item.badge && item.badge > 0 ? (
-                  <span className="px-1.5 py-0.5 rounded-md bg-[var(--kam-primary)] text-white font-num text-[0.65rem]">
-                    {item.badge}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-
-          <div className="pt-4 mt-4 border-t border-[var(--kam-border)] space-y-1">
-            <div className="px-3.5 pb-1 text-xs font-semibold text-[var(--kam-text-muted)]">
-              أدوات الخدمة السريعة
-            </div>
-            <button
-              type="button"
-              onClick={() => setSubView('SMART_ATTENDANCE')}
-              className={`w-full px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2.5 transition-colors ${
-                subView === 'SMART_ATTENDANCE'
-                  ? 'bg-[var(--kam-primary-container)] text-[var(--kam-primary)]'
-                  : 'text-[var(--kam-text-secondary)] hover:bg-[var(--kam-surface-variant)]'
-              }`}
-            >
-              <ClipboardCheck className="w-4 h-4 shrink-0" />
-              <span>التحضير الذكي</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSubView('VISITATION')}
-              className={`w-full px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2.5 transition-colors ${
-                subView === 'VISITATION'
-                  ? 'bg-[var(--kam-primary-container)] text-[var(--kam-primary)]'
-                  : 'text-[var(--kam-text-secondary)] hover:bg-[var(--kam-surface-variant)]'
-              }`}
-            >
-              <HeartHandshake className="w-4 h-4 shrink-0" />
-              <span>الافتقاد الذكي</span>
-            </button>
-            {canSeeLeaderboard && (
-              <button
-                type="button"
-                onClick={() => setSubView('LEADERBOARD')}
-                className={`w-full px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2.5 transition-colors ${
-                  subView === 'LEADERBOARD'
-                    ? 'bg-[var(--kam-primary-container)] text-[var(--kam-primary)]'
-                    : 'text-[var(--kam-text-secondary)] hover:bg-[var(--kam-surface-variant)]'
-                }`}
-              >
-                <Trophy className="w-4 h-4 shrink-0" />
-                <span>التقارير والصدارة</span>
-              </button>
+              </>
+            ) : syncStatus === 'SYNCING' ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 text-[var(--kam-primary)] animate-spin shrink-0" />
+                <span className="font-bold text-[var(--kam-primary)] truncate">
+                  جاري مزامنة التغييرات...
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-[#2CB578] shrink-0" />
+                <Wifi className="w-3 h-3 text-[#2CB578] shrink-0" />
+                <span className="font-semibold text-[var(--kam-text-secondary)] truncate">
+                  متصل • مزامنة تلقائية
+                </span>
+              </>
             )}
           </div>
-        </nav>
-      </aside>
 
-      {/* Main Content Viewport */}
-      <main className="flex-1 min-w-0 px-3 py-3 sm:p-6 pb-20 md:pb-6 max-w-6xl w-full mx-auto">
-        {dataLoading && !group ? (
-          <div className="py-20 text-center text-xs text-[var(--kam-text-muted)]">
-            جاري تحميل بيانات الفصل...
-          </div>
-        ) : (
-          renderContent()
-        )}
-      </main>
-
-      {/* Mobile Bottom Navigation Bar (Natural Thumb Zone, compact with pb-safe) */}
-      <nav
-        aria-label="التنقل السفلي"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[var(--kam-surface)]/95 backdrop-blur-md border-t border-[var(--kam-border)] px-2 pt-1 pb-safe grid grid-cols-4 gap-1"
-      >
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const active = subView === 'NONE' && activeTab === item.id;
-          return (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isInstallable && !isInstalled && (
+              <button
+                type="button"
+                onClick={() => triggerInstall()}
+                className="px-2 py-0.5 rounded-md bg-[var(--kam-primary)]/18 border border-[var(--kam-primary)]/40 text-[var(--kam-primary)] font-bold text-[10px] flex items-center gap-1"
+              >
+                <Download className="w-3 h-3" />
+                <span>تثبيت</span>
+              </button>
+            )}
             <button
-              key={item.id}
               type="button"
-              onClick={() => {
-                if (item.id === 'HOME') {
-                  handleHomeNavClick();
-                } else {
-                  setSubView('NONE');
-                  setActiveTab(item.id);
-                }
-              }}
-              className={`relative min-h-[48px] py-1 rounded-xl flex flex-col items-center justify-center gap-0.5 text-[0.7rem] font-bold transition-colors ${
-                active
-                  ? 'text-[var(--kam-primary)] bg-[var(--kam-primary-container)]/40'
-                  : 'text-[var(--kam-text-muted)]'
-              }`}
+              onClick={() => refreshAllData()}
+              title="مزامنة الآن"
+              className="p-1 rounded-md text-[var(--kam-text-muted)] hover:text-[var(--kam-primary)] transition-colors"
             >
-              <Icon className="w-5 h-5" />
-              <span className="whitespace-nowrap">{item.label}</span>
-              {item.badge && item.badge > 0 ? (
-                <span className="absolute top-1 left-3 px-1.5 py-0.2 rounded-full bg-[var(--kam-primary)] text-white font-num text-[0.6rem] leading-tight">
-                  {item.badge}
-                </span>
-              ) : null}
+              <RefreshCw className="w-3.5 h-3.5" />
             </button>
-          );
-        })}
-      </nav>
+          </div>
+        </div>
+
+        {/* Main Screen Viewport */}
+        <main className={`flex-1 min-w-0 px-3 pt-2.5 ${showBottomBar ? 'pb-24' : 'pb-4'}`}>
+          {dataLoading && !group ? (
+            <div className="py-20 text-center text-xs text-[var(--kam-text-muted)]">
+              جاري تحميل بيانات الفصل...
+            </div>
+          ) : (
+            renderContent()
+          )}
+        </main>
+
+        {/* Floating Capsule 5-Tab Bottom Navigation Bar (Matching KamBottomNavigationBar.kt) */}
+        {showBottomBar && (
+          <div className="fixed bottom-0 inset-x-0 z-40 pointer-events-none flex justify-center px-3.5 pb-2.5 pt-1">
+            <nav
+              aria-label="التنقل السفلي"
+              className="pointer-events-auto w-full max-w-[475px] h-[66px] rounded-[28px] bg-[var(--kam-surface)]/95 backdrop-blur-md border border-[var(--kam-border)]/85 shadow-2xl px-1.5 py-1.5 grid grid-cols-5 gap-0.5"
+            >
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const selected = activeTab === item.id;
+                const badgeCount = item.badge ?? 0;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleTabSelect(item.id)}
+                    className={`relative h-full rounded-[22px] flex flex-col items-center justify-center transition-all select-none ${
+                      selected
+                        ? 'bg-[var(--kam-primary)]/18 border border-[var(--kam-primary)]/40 text-[var(--kam-primary)]'
+                        : 'text-[var(--kam-text-muted)] hover:text-[var(--kam-text-secondary)]'
+                    }`}
+                  >
+                    {/* Top Glow Accent Bar */}
+                    <span
+                      className={`h-[3px] rounded-full transition-all duration-200 mb-0.5 ${
+                        selected ? 'w-4 bg-[var(--kam-primary)]' : 'w-0 bg-transparent'
+                      }`}
+                    />
+
+                    <div className="relative flex items-center justify-center">
+                      <Icon
+                        className={`transition-transform duration-200 ${
+                          selected ? 'w-[21px] h-[21px] scale-105' : 'w-[19px] h-[19px]'
+                        }`}
+                      />
+                      {badgeCount > 0 && (
+                        <span className="absolute -top-1.5 -left-2.5 min-w-[16px] h-[15px] px-1 rounded-full bg-[var(--kam-danger)] text-white font-num font-extrabold text-[9px] flex items-center justify-center leading-none">
+                          {badgeCount > 99 ? '99+' : badgeCount}
+                        </span>
+                      )}
+                    </div>
+
+                    <span
+                      className={`mt-0.5 text-[10px] leading-tight truncate max-w-full px-0.5 ${
+                        selected
+                          ? 'font-extrabold text-[var(--kam-text-primary)]'
+                          : 'font-medium text-[var(--kam-text-muted)]'
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        )}
+
+        <StudentHoldQuickPeekRootOverlay />
+      </div>
     </div>
   );
 };
 
 export default function App() {
   return (
-    <KamProvider>
-      <MainShell />
-      <ToastContainer />
-    </KamProvider>
+    <AppErrorBoundary>
+      <KamProvider>
+        <MainShell />
+        <ToastContainer />
+      </KamProvider>
+    </AppErrorBoundary>
   );
 }

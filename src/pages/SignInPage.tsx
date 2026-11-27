@@ -1,197 +1,175 @@
-import React, { useMemo, useState } from 'react';
-import {
-  AlertCircle,
-  Award,
-  Calendar,
-  Check,
-  Copy,
-  ExternalLink,
-  KeyRound,
-  MessageSquare,
-  Play,
-  ShieldCheck,
-  Smartphone,
-  Users,
-} from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertCircle, Cloud, Star, Users, Zap } from 'lucide-react';
 import { useKam } from '../context/KamContext';
-import {
-  getCurrentHostname,
-  getFirebaseAuthDomainsConsoleUrl,
-  isRunningInIframe,
-  startDirectGoogleOAuthRedirect,
-} from '../services/authService';
 
 export const SignInPage: React.FC = () => {
-  const {
-    signInGoogle,
-    signInGoogleRedirect,
-    signInGoogleToken,
-    enterPreviewMode,
-    authError,
-    clearAuthError,
-    showToast,
-  } = useKam();
-  const [signingInMode, setSigningInMode] = useState<'NONE' | 'POPUP' | 'REDIRECT' | 'TOKEN'>('NONE');
-  const [copiedDomain, setCopiedDomain] = useState(false);
-  const [showTokenBox, setShowTokenBox] = useState(false);
-  const [tokenInput, setTokenInput] = useState('');
+  const { signInGoogle, authError, clearAuthError } = useKam();
+  const [signingIn, setSigningIn] = useState(false);
 
-  const inIframe = useMemo(() => isRunningInIframe(), []);
-  const currentHost = useMemo(() => getCurrentHostname(), []);
-  const firebaseConsoleUrl = useMemo(() => getFirebaseAuthDomainsConsoleUrl(), []);
-
-  const handlePopupLogin = async () => {
-    setSigningInMode('POPUP');
+  const handleLogin = async () => {
+    setSigningIn(true);
     try {
       await signInGoogle();
     } finally {
-      setSigningInMode('NONE');
+      setSigningIn(false);
     }
   };
 
-  const handleRedirectLogin = async () => {
-    setSigningInMode('REDIRECT');
-    try {
-      await signInGoogleRedirect();
-    } finally {
-      setSigningInMode('NONE');
-    }
-  };
+  const row1Cards = [
+    { symbol: '✓', points: 3, label: 'الحضور', color: '#2CB578' },
+    { symbol: '🤫', points: 5, label: 'الهدوء', color: '#38A3E8' },
+    { symbol: '✋', points: 2, label: 'المشاركة', color: '#9D7BFF' },
+    { symbol: '🎵', points: 10, label: 'التسبحة', color: '#F06A9B' },
+  ];
 
-  const handleCopyDomain = async () => {
-    try {
-      await navigator.clipboard.writeText(currentHost);
-      setCopiedDomain(true);
-      showToast(`تم نسخ النطاق: ${currentHost}`, 'success');
-      window.setTimeout(() => setCopiedDomain(false), 3000);
-    } catch {
-      showToast(currentHost, 'info');
-    }
-  };
-
-  const handleTokenLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tokenInput.trim()) return;
-    setSigningInMode('TOKEN');
-    try {
-      await signInGoogleToken(tokenInput);
-    } finally {
-      setSigningInMode('NONE');
-    }
-  };
+  const row2Cards = [
+    { symbol: '⭐', points: 20, label: 'الذهب', color: '#E5A436' },
+    { symbol: '📖', points: 6, label: 'المحفوظات', color: '#22B8B0' },
+    { symbol: '🕊️', points: 4, label: 'الاعتراف', color: '#E8854A' },
+  ];
 
   return (
-    <div className="min-h-dvh bg-[var(--kam-bg)] text-[var(--kam-text-primary)] flex items-center justify-center p-4 sm:p-6">
-      <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 rounded-3xl border border-[var(--kam-border)] bg-[var(--kam-surface)] overflow-hidden shadow-xl">
-        {/* Primary Sign-In Card (First on mobile for instant above-the-fold thumb access) */}
-        <div className="lg:col-span-6 lg:order-2 p-6 sm:p-10 flex flex-col justify-center">
-          <div className="max-w-md mx-auto w-full space-y-5">
-            {/* Compact Mobile Brand Header */}
-            <div className="flex items-center gap-3.5 lg:hidden">
-              <div className="w-12 h-12 rounded-2xl bg-[var(--kam-primary)] text-white flex items-center justify-center font-num font-extrabold text-lg shrink-0 shadow-sm">
-                kAM
+    <div className="min-h-dvh bg-[var(--kam-bg)] text-[var(--kam-text-primary)] flex justify-center">
+      <div className="w-full max-w-[480px] min-h-dvh px-5 py-8 flex flex-col items-center justify-between">
+        <div className="h-2" />
+
+        {/* Hero Section */}
+        <div className="w-full flex flex-col items-center text-center">
+          <div
+            className="w-[84px] h-[84px] rounded-[22px] border border-[var(--kam-primary)]/40 flex items-center justify-center shadow-lg"
+            style={{
+              background: 'linear-gradient(135deg, rgba(108, 123, 255, 0.25), rgba(229, 164, 54, 0.20))',
+            }}
+          >
+            <Star className="w-10 h-10 text-[var(--kam-gold)] fill-[var(--kam-gold)]" />
+          </div>
+
+          <h1 className="mt-4 text-[1.75rem] font-extrabold text-[var(--kam-text-primary)] leading-tight">
+            نجم الكارت
+          </h1>
+
+          <p className="mt-1.5 text-sm text-[var(--kam-text-secondary)] leading-relaxed">
+            تسجيل حضور وكروت ونقاط الأطفال بضغطة واحدة وسط الفصل
+          </p>
+        </div>
+
+        {/* Highlights Card */}
+        <div className="w-full my-5 rounded-[18px] bg-[var(--kam-surface)] border border-[var(--kam-border)] p-[18px] space-y-3.5">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-[10px] bg-[var(--kam-primary)]/15 flex items-center justify-center shrink-0">
+              <Zap className="w-5 h-5 text-[var(--kam-primary)]" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-[var(--kam-text-primary)]">
+                سرعة الضغط وسط الفصل
               </div>
-              <div>
-                <h1 className="text-xl font-extrabold tracking-tight">نجم الكارت</h1>
-                <p className="text-xs text-[var(--kam-text-muted)]">
-                  إدارة فصول مدارس الأحد وخدمة الأطفال
-                </p>
+              <div className="text-xs text-[var(--kam-text-secondary)] leading-relaxed">
+                ٧ كروت معتمدة تحت اسم كل طفل تتحدث فوراً بضغطة واحدة بدون تكرار
               </div>
             </div>
+          </div>
 
-            <div className="space-y-1.5">
-              <h2 className="text-xl sm:text-2xl font-extrabold">تسجيل الدخول</h2>
-              <p className="text-sm text-[var(--kam-text-secondary)] leading-relaxed">
-                سجّل الدخول بحساب Google للوصول إلى فصولك ومتابعة الحضور والكروت والافتقاد.
-              </p>
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-[10px] bg-[var(--kam-primary)]/15 flex items-center justify-center shrink-0">
+              <Users className="w-5 h-5 text-[var(--kam-primary)]" />
             </div>
+            <div>
+              <div className="text-sm font-bold text-[var(--kam-text-primary)]">
+                الأمين + حتى ٥٠ خادم في مجموعة واحدة
+              </div>
+              <div className="text-xs text-[var(--kam-text-secondary)] leading-relaxed">
+                بلوك ملوّن لكل خادم + قسم بدون بلوك واستيراد الأسماء دفعة واحدة
+              </div>
+            </div>
+          </div>
 
-            {/* Error Alert + Multi-Method Instant Solutions when domain is not yet allowlisted */}
-            {authError && (
-              <div
-                role="alert"
-                className="rounded-2xl border border-[var(--kam-danger)]/40 bg-[var(--kam-danger)]/10 p-4 text-xs space-y-3"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2 text-[var(--kam-text-primary)] leading-relaxed font-semibold">
-                    <AlertCircle className="w-4 h-4 text-[var(--kam-danger)] shrink-0 mt-0.5" />
-                    <span>{authError.messageAr}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={clearAuthError}
-                    className="text-xs font-semibold text-[var(--kam-text-muted)] hover:text-[var(--kam-text-primary)] shrink-0 px-1.5 py-0.5"
-                  >
-                    إغلاق
-                  </button>
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-[10px] bg-[var(--kam-primary)]/15 flex items-center justify-center shrink-0">
+              <Cloud className="w-5 h-5 text-[var(--kam-primary)]" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-[var(--kam-text-primary)]">
+                يعمل بدون إنترنت مع مزامنة تلقائية
+              </div>
+              <div className="text-xs text-[var(--kam-text-secondary)] leading-relaxed">
+                سجّل في وضع الطيران وسيتم حفظ ومزامنة النقاط فور عودة الاتصال
+              </div>
+            </div>
+          </div>
+
+          {/* Mini Card Preview Pills (4 + 3) */}
+          <div className="pt-1 space-y-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
+              {row1Cards.map((c) => (
+                <div
+                  key={c.label}
+                  className="py-1.5 px-1 rounded-[10px] flex flex-col items-center justify-center text-center border"
+                  style={{
+                    backgroundColor: `${c.color}24`,
+                    borderColor: `${c.color}66`,
+                  }}
+                >
+                  <span className="text-[11px] font-bold font-num" style={{ color: c.color }}>
+                    {c.symbol} +{c.points}
+                  </span>
+                  <span className="text-[10px] text-[var(--kam-text-secondary)]">{c.label}</span>
                 </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {row2Cards.map((c) => (
+                <div
+                  key={c.label}
+                  className="py-1.5 px-1 rounded-[10px] flex flex-col items-center justify-center text-center border"
+                  style={{
+                    backgroundColor: `${c.color}24`,
+                    borderColor: `${c.color}66`,
+                  }}
+                >
+                  <span className="text-[11px] font-bold font-num" style={{ color: c.color }}>
+                    {c.symbol} +{c.points}
+                  </span>
+                  <span className="text-[10px] text-[var(--kam-text-secondary)]">{c.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
 
-                {authError.isUnauthorizedDomain && (
-                  <div className="pt-2.5 border-t border-[var(--kam-danger)]/25 space-y-2.5">
-                    <p className="text-[0.75rem] text-[var(--kam-text-secondary)] leading-relaxed">
-                      لتشغيل زر Google الأساسي على هذا الرابط، انسخ النطاق وأضفه في{' '}
-                      <strong className="text-[var(--kam-text-primary)]">Authorized domains</strong>، أو استخدم إحدى الطرق البديلة بالأسفل للدخول فوراً:
-                    </p>
-
-                    {/* Method 1: Copy exact domain + direct link to Firebase Auth Settings */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleCopyDomain}
-                        className="min-h-[40px] flex-1 px-3 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-[var(--kam-text-primary)] font-num font-bold text-xs flex items-center justify-center gap-2 hover:border-[var(--kam-primary)] transition-colors"
-                      >
-                        {copiedDomain ? (
-                          <Check className="w-4 h-4 text-[var(--kam-success)] shrink-0" />
-                        ) : (
-                          <Copy className="w-4 h-4 text-[var(--kam-primary)] shrink-0" />
-                        )}
-                        <span dir="ltr">{currentHost}</span>
-                      </button>
-
-                      <a
-                        href={firebaseConsoleUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="min-h-[40px] px-3 py-2 rounded-xl bg-[var(--kam-primary)] text-white font-bold text-xs flex items-center justify-center gap-1.5 hover:opacity-95 transition-opacity"
-                      >
-                        <span>فتح إعدادات Firebase</span>
-                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      </a>
-                    </div>
-
-                    {/* Method 2: Open already-authorized Cloud Run instance */}
-                    <a
-                      href="https://kam-studio-1-863394288351.europe-west2.run.app"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-success)]/50 text-[var(--kam-success)] font-bold text-xs flex items-center justify-center gap-2 hover:bg-[var(--kam-success)]/10 transition-colors"
-                    >
-                      <ExternalLink className="w-4 h-4 shrink-0" />
-                      <span>فتح التطبيق على النطاق المفعّل الجاهز (شغال فوراً بـ Google)</span>
-                    </a>
-
-                    {/* Method 3: Interactive Full App Preview Mode */}
-                    <button
-                      type="button"
-                      onClick={enterPreviewMode}
-                      className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-tertiary)]/15 border border-[var(--kam-tertiary)]/40 text-[var(--kam-tertiary)] font-bold text-xs flex items-center justify-center gap-2 hover:bg-[var(--kam-tertiary)]/25 transition-colors"
-                    >
-                      <Play className="w-4 h-4 shrink-0" />
-                      <span>تشغيل التطبيق بالكامل الآن (وضع المعاينة التفاعلي)</span>
-                    </button>
-                  </div>
-                )}
+        {/* Sign In Section */}
+        <div className="w-full flex flex-col items-center space-y-3">
+          {authError && (
+            <div
+              role="alert"
+              className="w-full rounded-xl border border-[var(--kam-danger)]/50 bg-[var(--kam-danger)]/15 p-3 text-xs flex items-start justify-between gap-2"
+            >
+              <div className="flex items-start gap-2 text-[var(--kam-danger)] font-semibold leading-relaxed">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{authError.messageAr}</span>
               </div>
-            )}
-
-            {/* Primary & Alternative Login Methods */}
-            <div className="space-y-2.5">
               <button
                 type="button"
-                onClick={handlePopupLogin}
-                disabled={signingInMode !== 'NONE'}
-                className="w-full min-h-[50px] py-3.5 px-4 rounded-2xl bg-[var(--kam-primary)] hover:opacity-95 active:scale-[0.99] text-[var(--kam-on-primary)] font-bold text-sm flex items-center justify-center gap-3 transition-all disabled:opacity-60 shadow-sm"
+                onClick={clearAuthError}
+                className="text-[11px] font-bold text-[var(--kam-text-muted)] hover:text-[var(--kam-text-primary)] shrink-0"
               >
+                إغلاق
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={handleLogin}
+            disabled={signingIn}
+            className="w-full h-[54px] rounded-[14px] bg-[var(--kam-primary)] hover:opacity-95 active:scale-[0.99] text-[var(--kam-on-primary)] font-bold text-base flex items-center justify-center gap-2.5 transition-all disabled:opacity-60 shadow-md"
+          >
+            {signingIn ? (
+              <>
+                <span className="w-5 h-5 rounded-full border-2 border-[var(--kam-on-primary)] border-t-transparent animate-spin" />
+                <span>جاري تسجيل الدخول...</span>
+              </>
+            ) : (
+              <>
                 <svg
                   className="w-5 h-5 bg-white rounded-full p-0.5 shrink-0"
                   viewBox="0 0 24 24"
@@ -214,156 +192,14 @@ export const SignInPage: React.FC = () => {
                     d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09c.95-2.85 3.6-4.96 6.73-4.96z"
                   />
                 </svg>
-                <span>
-                  {signingInMode === 'POPUP' ? 'جاري تسجيل الدخول...' : 'المتابعة باستخدام Google'}
-                </span>
-              </button>
+                <span>تسجيل الدخول بحساب Google</span>
+              </>
+            )}
+          </button>
 
-              {!inIframe && (
-                <button
-                  type="button"
-                  onClick={handleRedirectLogin}
-                  disabled={signingInMode !== 'NONE'}
-                  className="w-full min-h-[46px] py-2.5 px-4 rounded-2xl bg-[var(--kam-surface-variant)] hover:border-[var(--kam-primary)] border border-[var(--kam-border)] text-[var(--kam-text-primary)] font-semibold text-xs flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                >
-                  <Smartphone className="w-4 h-4 text-[var(--kam-tertiary)] shrink-0" />
-                  <span>
-                    {signingInMode === 'REDIRECT'
-                      ? 'جاري التحويل إلى Google...'
-                      : 'تسجيل الدخول بطريقة بديلة للموبايل'}
-                  </span>
-                </button>
-              )}
-
-              {/* Direct Token / Credential Login & Instant Preview Bar */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={enterPreviewMode}
-                  className="min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface-variant)]/70 hover:border-[var(--kam-tertiary)] border border-[var(--kam-border)] text-[var(--kam-text-secondary)] hover:text-[var(--kam-text-primary)] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <Play className="w-3.5 h-3.5 text-[var(--kam-tertiary)] shrink-0" />
-                  <span>تجربة التطبيق فوراً</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowTokenBox((v) => !v)}
-                  className="min-h-[42px] px-3 py-2 rounded-xl bg-[var(--kam-surface-variant)]/70 hover:border-[var(--kam-primary)] border border-[var(--kam-border)] text-[var(--kam-text-secondary)] hover:text-[var(--kam-text-primary)] font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <KeyRound className="w-3.5 h-3.5 text-[var(--kam-gold)] shrink-0" />
-                  <span>دخول برمز Google</span>
-                </button>
-              </div>
-
-              {showTokenBox && (
-                <form
-                  onSubmit={handleTokenLogin}
-                  className="p-3.5 rounded-2xl bg-[var(--kam-surface-variant)] border border-[var(--kam-border)] space-y-2.5 text-xs"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-[var(--kam-text-primary)]">
-                      دخول مباشر بـ Google Credential (بدون قيد الدومين)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={startDirectGoogleOAuthRedirect}
-                      className="text-[0.7rem] font-semibold text-[var(--kam-primary)] hover:underline"
-                    >
-                      جلب الرمز من Google
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
-                    placeholder="الصق Google ID Token أو Access Token هنا..."
-                    className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-[var(--kam-surface)] border border-[var(--kam-border)] text-xs font-num"
-                  />
-                  <button
-                    type="submit"
-                    disabled={signingInMode !== 'NONE' || !tokenInput.trim()}
-                    className="w-full min-h-[40px] py-2 rounded-xl bg-[var(--kam-primary)] text-white font-bold text-xs disabled:opacity-50"
-                  >
-                    {signingInMode === 'TOKEN' ? 'جاري التحقق والدخول...' : 'تسجيل الدخول بالرمز'}
-                  </button>
-                </form>
-              )}
-            </div>
-
-            <div className="flex items-start gap-2.5 pt-3 border-t border-[var(--kam-border)] text-xs text-[var(--kam-text-muted)] leading-relaxed">
-              <ShieldCheck className="w-4 h-4 text-[var(--kam-success)] shrink-0 mt-0.5" />
-              <span>
-                بيانات الفصل والأطفال والخدام محمية ومخصصة لأعضاء فصلك فقط.
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Visual Brand & Highlights Panel (Second on mobile, Right side on desktop) */}
-        <div className="lg:col-span-6 lg:order-1 p-6 sm:p-10 flex flex-col justify-between bg-[var(--kam-surface-variant)]/55 border-t lg:border-t-0 lg:border-l border-[var(--kam-border)]">
-          <div className="space-y-5">
-            <div className="hidden lg:flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-2xl bg-[var(--kam-primary)] text-white flex items-center justify-center font-num font-extrabold text-lg">
-                kAM
-              </div>
-              <div>
-                <h1 className="text-xl font-extrabold tracking-tight">نجم الكارت</h1>
-                <p className="text-xs text-[var(--kam-text-muted)]">
-                  إدارة فصول مدارس الأحد وخدمة الأطفال
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <h3 className="text-lg sm:text-2xl font-extrabold leading-snug text-balance">
-                متابعة الحضور، الكروت، والافتقاد بسهولة ومزامنة فورية
-              </h3>
-              <p className="text-xs sm:text-sm text-[var(--kam-text-secondary)] leading-relaxed">
-                كل ما يحتاجه خادم مدارس الأحد في مكان واحد لمتابعة أطفال الفصل وتسجيل النقاط الأسبوعية والتواصل مع باقي الخدام.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 grid grid-cols-2 gap-3.5 pt-5 border-t border-[var(--kam-border)]">
-            <div className="flex items-start gap-2.5">
-              <Award className="w-4 h-4 text-[var(--kam-gold)] shrink-0 mt-0.5" />
-              <div>
-                <div className="text-xs font-bold">كروت النقاط والأرصدة</div>
-                <div className="text-[0.7rem] text-[var(--kam-text-muted)]">
-                  حساب تلقائي للأرصدة الشهرية
-                </div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <Calendar className="w-4 h-4 text-[var(--kam-tertiary)] shrink-0 mt-0.5" />
-              <div>
-                <div className="text-xs font-bold">تقويم السبت والقبطي</div>
-                <div className="text-[0.7rem] text-[var(--kam-text-muted)]">
-                  تقارير أسبوعية وشهرية دقيقة
-                </div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <Users className="w-4 h-4 text-[var(--kam-success)] shrink-0 mt-0.5" />
-              <div>
-                <div className="text-xs font-bold">بلوكات الخدام والافتقاد</div>
-                <div className="text-[0.7rem] text-[var(--kam-text-muted)]">
-                  تنظيم مرن مع متابعة لحظية
-                </div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <MessageSquare className="w-4 h-4 text-[var(--kam-primary)] shrink-0 mt-0.5" />
-              <div>
-                <div className="text-xs font-bold">شات جماعي ورسائل خاصة</div>
-                <div className="text-[0.7rem] text-[var(--kam-text-muted)]">
-                  تنسيق سريع وتقارير تحضير
-                </div>
-              </div>
-            </div>
-          </div>
+          <p className="text-xs text-[var(--kam-text-muted)] text-center">
+            يُستخدم حساب Google لمزامنة نقاط أطفال مجموعتك بأمان
+          </p>
         </div>
       </div>
     </div>

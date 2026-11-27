@@ -11,6 +11,7 @@ interface AvatarBadgeProps {
   initials?: string;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   accentColor?: string;
+  accentHex?: string;
   online?: boolean;
 }
 
@@ -30,8 +31,10 @@ export const AvatarBadge: React.FC<AvatarBadgeProps> = ({
   initials,
   size = 'sm',
   accentColor,
+  accentHex,
   online,
 }) => {
+  const resolvedAccent = accentColor || accentHex;
   const { avatarCache, ensureStudentAvatarLoaded } = useKam();
   const [imgFailed, setImgFailed] = useState(false);
 
@@ -65,8 +68,8 @@ export const AvatarBadge: React.FC<AvatarBadgeProps> = ({
         <div
           className="w-full h-full rounded-full flex items-center justify-center font-bold select-none border border-[var(--kam-border)]"
           style={{
-            backgroundColor: accentColor ? `${accentColor}22` : 'var(--kam-primary-container)',
-            color: accentColor || 'var(--kam-primary)',
+            backgroundColor: resolvedAccent ? `${resolvedAccent}22` : 'var(--kam-primary-container)',
+            color: resolvedAccent || 'var(--kam-primary)',
           }}
         >
           {labelInitials}
